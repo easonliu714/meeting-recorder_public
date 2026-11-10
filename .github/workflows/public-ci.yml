@@ -1,0 +1,99 @@
+name: Public CI — sanitization and Linux regression (no signing)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-mirror-main
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Public snapshot guard — bootstrap is NOT application CI
+    if: github.repository == 'easonliu714/meeting-recorder_public'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout public mirror (do not retain token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate publication guard positive and negative tests
+        run: python3 -m unittest discover -s ci/tests -p 'test_*.py' -v
+
+      - name: Verify exact public snapshot files and safety boundary
+        id: guard
+        run: python3 ci/verify_public_snapshot.py
+
+      - name: Set up Java for application tests only
+        if: steps.guard.outputs.has_source == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.32.8 for application tests only
+        if: steps.guard.outputs.has_source == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.8'
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Set up Gradle 8.12 for Kotlin compile only
+        if: steps.guard.outputs.has_source == 'true'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.12'
+
+      - name: Ensure offline AAC test tools are present
+        if: steps.guard.outputs.has_source == 'true'
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          command -v ffmpeg
+          command -v ffprobe
+
+      - name: Resolve Flutter dependencies
+        if: steps.guard.outputs.has_source == 'true'
+        run: flutter pub get
+
+      - name: Run all retained applicable Python source and safety regressions
+        if: steps.guard.outputs.has_source == 'true'
+        run: python3 -m unittest discover -s tool/tests -p 'test_*.py' -v
+
+      - name: Blocking Flutter analyze for original safety regression scope
+        if: steps.guard.outputs.has_source == 'true'
+        run: |
+          flutter analyze \
+            lib/groq_wav_balanced_core_plan.dart \
+            lib/groq_wav_pcm_splitter.dart \
+            test/groq_wav_balanced_core_plan_test.dart \
+            test/groq_wav_balanced_exact_boundary_regression_test.dart \
+            test/groq_wav_balanced_physical_stage_test.dart \
+            test/groq_wav_pr79_new_negative_contract_test.dart \
+            lib/groq_native_aac_bridge.dart \
+            test/groq_native_aac_bridge_test.dart
+
+      - name: Run all Flutter positive and negative security regressions
+        if: steps.guard.outputs.has_source == 'true'
+        run: flutter test
+
+      - name: Compile Android Kotlin without APK/signing
+        if: steps.guard.outputs.has_source == 'true'
+        run: |
+          set -euo pipefail
+          cd android
+          gradle :app:compileDebugKotlin --no-daemon --console=plain
+          test ! -e ../build/app/outputs/flutter-apk/app-debug.apk
