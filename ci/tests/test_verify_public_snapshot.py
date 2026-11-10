@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from verify_public_snapshot import (  # noqa: E402
-    BOOTSTRAP_FILES, REQUIRED_SOURCE_FILES, PublicationHold, audit,
+    BOOTSTRAP_FILES, ORIGINAL_FONT_ASSETS, REQUIRED_SOURCE_FILES, PublicationHold, audit,
 )
 
 
@@ -27,7 +27,13 @@ class PublicationBoundaryTests(unittest.TestCase):
         for path in paths:
             target = self.root / path
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(("fixture: " + path).encode())
+            # Font integrity is a separate non-negotiable prerequisite.
+            # The successful manifest fixture must contain the real pinned
+            # Owner binaries; negative tests still mutate only their target.
+            if path in ORIGINAL_FONT_ASSETS:
+                target.write_bytes((Path(__file__).resolve().parents[2] / path).read_bytes())
+            else:
+                target.write_bytes(("fixture: " + path).encode())
         rows = [
             {"path": path, "sha256": hashlib.sha256(
                 (self.root / path).read_bytes()).hexdigest()}
