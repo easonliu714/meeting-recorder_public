@@ -97,6 +97,23 @@ class PublicationBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(PublicationHold, "SENSITIVE_TEXT_PATTERN"):
             audit(self.root)
 
+    def test_unmanifested_signing_properties_never_attested(self):
+        self.make_source()
+        path = "android/upload-keystore.properties"
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("storePassword=synthetic-only", encoding="utf-8")
+        doc_path = self.root / "ci/public_snapshot_manifest.json"
+        doc = json.loads(doc_path.read_text(encoding="utf-8"))
+        doc["files"].append({
+            "path": path,
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        })
+        doc["files"].sort(key=lambda row: row["path"])
+        doc_path.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaisesRegex(PublicationHold, "UNSAFE_SOURCE"):
+            audit(self.root)
+
     def test_unmanifested_binary_icon_is_blocked(self):
         extra = self.root / "assets/app_icon.png"
         extra.parent.mkdir(parents=True, exist_ok=True)

@@ -23,6 +23,8 @@ BOOTSTRAP_FILES = {
     "ci/prepare_public_snapshot.py",
     "ci/tests/test_prepare_public_snapshot.py",
     "ci/tests/test_font_intake.py",
+    "ci/audit_private_git_head.py",
+    "ci/tests/test_audit_private_git_head.py",
     ".github/workflows/public-ci.yml",
 }
 MANIFEST = "ci/public_snapshot_manifest.json"
@@ -54,6 +56,8 @@ FORBIDDEN_PREFIXES = (
 FORBIDDEN_NAMES = {
     "GEMINI.md", "key.properties", "local.properties",
     "gradle.properties.local", ".env", ".env.local",
+    "upload-keystore.properties", "signing.properties",
+    "service-account.json", "google-services.json",
 }
 FORBIDDEN_EXTENSIONS = {
     ".wav", ".mp3", ".m4a", ".aac", ".mp4", ".ogg", ".apk", ".aab",

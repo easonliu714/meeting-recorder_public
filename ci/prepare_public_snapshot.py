@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 
+from audit_private_git_head import inspect_private_head
 from verify_public_snapshot import (
     BINARY_WHITELIST, BOOTSTRAP_FILES, MANIFEST, REQUIRED_SOURCE_FILES,
     SENSITIVE_PATTERNS, PublicationHold, _allowed_source, audit,
@@ -133,6 +134,10 @@ def prepare(private: Path, public: Path, head: str, apply: bool = False) -> int:
     if (not re.search(r"easonliu714/meeting-recorder(?:\.git)?$", private_remote) or
             not re.search(r"easonliu714/meeting-recorder_public(?:\.git)?$", public_remote)):
         raise PublicationHold("REPOSITORY_IDENTITY_HOLD")
+    # Scan ALL tracked Private exact-HEAD blobs before selective export. This
+    # catches sensitive material even under excluded docs/CI files and refuses
+    # the original Private signing-properties .gitignore vulnerability.
+    inspect_private_head(private, head)
     with tempfile.TemporaryDirectory(prefix="mr-public-export-") as temp:
         staged = Path(temp)
         manifest = create_staging(private, public, head, staged)

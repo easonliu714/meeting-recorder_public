@@ -38,3 +38,7 @@ Do not treat Public bootstrap SUCCESS as equivalent to Private Source/Test/Gradl
 ## Owner font upload verified (2026-11-10)
 
 The original static **Noto Sans TC Regular/Bold** files (7,109,460 / 7,104,212 bytes) and SIL OFL `OFL.txt` (4,481 bytes) are now present on the font-intake branch, exact-Git-blob equivalent to private PR79. The public guard hard-pins their complete SHA256; partial uploads or substitute fonts fail closed. The `FONT_ASSETS_READY` result is **not** `SOURCE_INTEGRITY_READY` and never enables application Flutter/Kotlin steps by itself. The complete audited private exact-head source manifest remains required.
+
+## Exact Private PR79 sensitive audit (blocking prerequisite)
+
+The offline exporter now scans **every tracked text blob** of the local exact Private Git HEAD, even sources excluded from the later public mirror; it does not rely solely on the manifest's claimed SHA. It forbids tracked signing properties, credential-like strings and personal-contact patterns, and requires the **original Private HEAD** to ignore `android/upload-keystore.properties` and the `.jks` signing key. This is a real pre-existing Private `.gitignore` vulnerability: the workflow generates unquoted `storePassword` and `keyPassword` fields, but the Private head does not ignore its `upload-keystore.properties`. **Do not copy or publish Private Source/Test while this hold remains.** This does not certify license or media rights. The tool does not push or run a Provider; tests use only synthetic Git repositories.
