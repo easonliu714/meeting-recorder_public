@@ -18,6 +18,7 @@ BOOTSTRAP_FILES = {
     "README.md",
     "ci/verify_public_snapshot.py",
     "ci/tests/test_verify_public_snapshot.py",
+    "ci/tests/test_public_ci_workflow_contract.py",
     ".github/workflows/public-ci.yml",
 }
 MANIFEST = "ci/public_snapshot_manifest.json"
