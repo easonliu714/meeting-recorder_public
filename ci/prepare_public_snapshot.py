@@ -98,7 +98,7 @@ def create_staging(private: Path, public: Path, head: str, destination: Path) ->
         raise PublicationHold("INVALID_PRIVATE_HEAD")
     if git(private, "rev-parse", "HEAD").decode().strip() != head:
         raise PublicationHold("PRIVATE_HEAD_CHANGED_HOLD")
-    if audit(public) != "BOOTSTRAP_ONLY":
+    if audit(public) not in ("BOOTSTRAP_ONLY", "FONT_ASSETS_READY"):
         raise PublicationHold("PUBLIC_NOT_CLEAN_BOOTSTRAP_HOLD")
     for name in BOOTSTRAP_FILES:
         target = destination / name
@@ -142,18 +142,23 @@ def prepare(private: Path, public: Path, head: str, apply: bool = False) -> int:
             return len(manifest["files"])
         # Never modify existing tracked paths, Git refs, histories or bootstrap
         # guards. The recipient must independently review/git-add/git-push.
-        if audit(public) != "BOOTSTRAP_ONLY":
+        if audit(public) not in ("BOOTSTRAP_ONLY", "FONT_ASSETS_READY"):
             raise PublicationHold("PUBLIC_CONCURRENT_CHANGE_HOLD")
         for row in manifest["files"]:
             path = row["path"]
             dst = public / path
             if dst.exists() or dst.is_symlink():
-                raise PublicationHold("PUBLIC_DESTINATION_EXISTS_HOLD:" + path)
+                # Owner-uploaded original TTFs and OFL may already be staged.
+                # Only byte-identical attested originals may be retained.
+                if path not in EXPECTED_FONT_ASSETS or dst.is_symlink() or (
+                        hashlib.sha256(dst.read_bytes()).hexdigest() != row["sha256"]):
+                    raise PublicationHold("PUBLIC_DESTINATION_EXISTS_HOLD:" + path)
         for row in manifest["files"]:
             path = row["path"]
             dst = public / path
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(staged / path, dst)
+            if not dst.exists():
+                shutil.copyfile(staged / path, dst)
         (public / MANIFEST).write_bytes((staged / MANIFEST).read_bytes())
         if audit(public) != "SOURCE_INTEGRITY_READY":
             raise PublicationHold("PUBLIC_POST_COPY_AUDIT_HOLD")

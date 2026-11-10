@@ -34,3 +34,7 @@ python3 ci/prepare_public_snapshot.py \
 The exporter reads only immutable Git blobs, checks original Regular/Bold TTF SHA256 and OFL, rejects credentials/personal paths, private CI configuration, symlinks and media, and creates an exact SHA256 manifest. It refuses an already populated public snapshot or a mismatched HEAD. **Do not push** the resulting worktree until its full source/license review and missing binary Android launcher-icon dependency are resolved. The current GitHub connector cannot transport the original binary font blobs cross-repository; this is a real blocker, not a reason to use substitute glyphs or weaken the guard. Normal Git with a reviewed local checkout can transfer the two files.
 
 Do not treat Public bootstrap SUCCESS as equivalent to Private Source/Test/Gradle CI or Android UAT; use original exact-HEAD CI results for those Gates.
+
+## Owner font upload verified (2026-11-10)
+
+The original static **Noto Sans TC Regular/Bold** files (7,109,460 / 7,104,212 bytes) and SIL OFL `OFL.txt` (4,481 bytes) are now present on the font-intake branch, exact-Git-blob equivalent to private PR79. The public guard hard-pins their complete SHA256; partial uploads or substitute fonts fail closed. The `FONT_ASSETS_READY` result is **not** `SOURCE_INTEGRITY_READY` and never enables application Flutter/Kotlin steps by itself. The complete audited private exact-head source manifest remains required.

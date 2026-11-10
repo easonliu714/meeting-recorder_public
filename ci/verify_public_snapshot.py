@@ -22,6 +22,7 @@ BOOTSTRAP_FILES = {
     "ci/tests/test_h04m_physical_two_hour_aac.py",
     "ci/prepare_public_snapshot.py",
     "ci/tests/test_prepare_public_snapshot.py",
+    "ci/tests/test_font_intake.py",
     ".github/workflows/public-ci.yml",
 }
 MANIFEST = "ci/public_snapshot_manifest.json"
@@ -64,6 +65,26 @@ BINARY_WHITELIST = {
     "assets/fonts/NotoSansTC-Regular.ttf",
     "assets/fonts/NotoSansTC-Bold.ttf",
 }
+# H04J exact original Owner font identity: a changed manifest may NOT relabel
+# a modified font as approved. Check the same immutable digests in both
+# bootstrap-intake and full-source modes.
+ORIGINAL_FONT_ASSETS = {
+    "assets/fonts/NotoSansTC-Regular.ttf": (7109460, "add35d53f70727657b4509531677c4e3712b67df3d54661efdee5d3a0c16d954"),
+    "assets/fonts/NotoSansTC-Bold.ttf": (7104212, "ed4ae6ed781e34d0beee896e9be5d835a938ac7adabbcc1b6b6904290006f372"),
+    "assets/fonts/OFL.txt": (4481, "92c343f7e7caebff8bace350bc091b79755f4d0c8b70bb0df21570a1828917b8"),
+}
+
+
+def _audit_original_fonts(root: Path) -> None:
+    """No incomplete pair, substitute binaries, missing OFL or silent repair."""
+    for path, (expected_size, expected_sha) in ORIGINAL_FONT_ASSETS.items():
+        target = root / path
+        if not target.is_file() or target.is_symlink():
+            raise PublicationHold("ORIGINAL_FONT_PAIR_MISSING:" + path)
+        data = target.read_bytes()
+        if len(data) != expected_size or hashlib.sha256(data).hexdigest() != expected_sha:
+            raise PublicationHold("ORIGINAL_FONT_BYTES_MISMATCH:" + path)
+
 SENSITIVE_PATTERNS = [
     re.compile(r"gh[pousr]_[A-Za-z0-9_]{24,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{24,}"),
@@ -103,9 +124,14 @@ def audit(root: Path) -> str:
     if not BOOTSTRAP_FILES.issubset(actual):
         raise PublicationHold("BOOTSTRAP_FILES_MISSING")
     if MANIFEST not in actual:
-        if actual != BOOTSTRAP_FILES:
-            raise PublicationHold("UNATTESTED_SOURCE_IN_BOOTSTRAP")
-        return "BOOTSTRAP_ONLY"
+        if actual == BOOTSTRAP_FILES:
+            return "BOOTSTRAP_ONLY"
+        if actual == BOOTSTRAP_FILES | set(ORIGINAL_FONT_ASSETS):
+            _audit_original_fonts(root)
+            return "FONT_ASSETS_READY"
+        raise PublicationHold("UNATTESTED_SOURCE_IN_BOOTSTRAP")
+    # Full Source+Test attestation is NOT a bypass around original asset hashes.
+    _audit_original_fonts(root)
     try:
         doc = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
     except (ValueError, UnicodeError) as exc:
