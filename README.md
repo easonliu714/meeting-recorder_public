@@ -13,3 +13,24 @@ This repository is a **sanitized CI mirror**, not the canonical development repo
 **BOOTSTRAP_ONLY for application CI.** The mirror now independently executes one audited, source-identical **offline synthetic AAC physical 2-hour positive/negative regression** on standard Ubuntu, alongside publication guardrails. This partial project-test PASS does **not** certify the private application, Flutter suite, Android Kotlin, original data or APK readiness. The complete Linux application gate remains blocked until an audited source manifest is published and full coverage is verified.
 
 Do not place sensitive material in issues, pull requests, Actions logs, artifacts, or commits.
+
+
+## Audited application snapshot handoff (not yet published)
+
+The public runner currently validates only the offline synthetic AAC contract and publication safety tests. A complete Flutter/Android result **must remain HOLD** until an exact-head allowlisted snapshot, including the two Owner-provided original Noto Sans TC TTF files and OFL license, passes the manifest guard.
+
+A repository owner with **local, separate checkouts** can stage a reviewed snapshot without allowing this public repo or its workflows to access Private Repo credentials:
+
+
+```bash
+python3 ci/prepare_public_snapshot.py \
+  --private-root /path/to/private/meeting-recorder \
+  --public-root /path/to/public/meeting-recorder_public \
+  --private-head <exact-40-char-private-PR79-HEAD>
+# After dry-run PASS and human review, repeat with --apply.
+# The script NEVER pushes, merges, signs or calls any Provider.
+```
+
+The exporter reads only immutable Git blobs, checks original Regular/Bold TTF SHA256 and OFL, rejects credentials/personal paths, private CI configuration, symlinks and media, and creates an exact SHA256 manifest. It refuses an already populated public snapshot or a mismatched HEAD. **Do not push** the resulting worktree until its full source/license review and missing binary Android launcher-icon dependency are resolved. The current GitHub connector cannot transport the original binary font blobs cross-repository; this is a real blocker, not a reason to use substitute glyphs or weaken the guard. Normal Git with a reviewed local checkout can transfer the two files.
+
+Do not treat Public bootstrap SUCCESS as equivalent to Private Source/Test/Gradle CI or Android UAT; use original exact-HEAD CI results for those Gates.

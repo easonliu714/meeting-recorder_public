@@ -20,6 +20,8 @@ BOOTSTRAP_FILES = {
     "ci/tests/test_verify_public_snapshot.py",
     "ci/tests/test_public_ci_workflow_contract.py",
     "ci/tests/test_h04m_physical_two_hour_aac.py",
+    "ci/prepare_public_snapshot.py",
+    "ci/tests/test_prepare_public_snapshot.py",
     ".github/workflows/public-ci.yml",
 }
 MANIFEST = "ci/public_snapshot_manifest.json"
