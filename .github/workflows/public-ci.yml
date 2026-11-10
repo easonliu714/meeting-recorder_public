@@ -25,6 +25,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify physical AAC offline toolchain
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          command -v ffmpeg
+          command -v ffprobe
+
       - name: Validate publication guard positive and negative tests
         # Avoid writing untracked __pycache__ into the snapshot during audit.
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ci/tests -p 'test_*.py' -v
