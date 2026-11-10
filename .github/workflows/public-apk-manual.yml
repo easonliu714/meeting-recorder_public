@@ -1,0 +1,175 @@
+name: Public APK stable signer — gated manual delivery
+on:
+  workflow_dispatch:
+    inputs:
+      approved_head:
+        description: Reviewed exact Public main HEAD
+        required: true
+        type: string
+      apk_type:
+        required: true
+        type: choice
+        options: [debug, release]
+        default: debug
+permissions:
+  contents: read
+concurrency:
+  group: public-stable-signing
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  source-gate:
+    name: Exact manifest, generator and full CI (no secrets)
+    if: github.repository == 'easonliu714/meeting-recorder_public' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Fail closed until approved application source snapshot
+        env:
+          APPROVED_HEAD: ${{ inputs.approved_head }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$APPROVED_HEAD" == "$GITHUB_SHA" && "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$(python3 ci/verify_public_snapshot.py)" == 'PUBLIC_EXPORT_SOURCE_INTEGRITY_READY' ]]
+          test -f tool/verify_signed_android_apk.py
+      - name: Public positive and negative safety contracts
+        run: python3 -m unittest discover -s ci/tests -p 'test_*.py' -v
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.8'
+          channel: stable
+          cache: true
+          pub-cache: true
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.12'
+      - name: Source generator
+        run: python3 tool/patch_v1_1_4_issue65_import_roster_groq_clock_quality_default_p0.py
+      - name: Flutter dependencies
+        run: flutter pub get
+      - name: Python source regressions
+        run: python3 -m unittest discover -s tool/tests -p 'test_*.py' -v
+      - name: Blocking Flutter safety analyzer
+        run: |
+          flutter analyze lib/groq_wav_balanced_core_plan.dart lib/groq_wav_pcm_splitter.dart \
+            test/groq_wav_balanced_core_plan_test.dart test/groq_wav_balanced_exact_boundary_regression_test.dart \
+            test/groq_wav_balanced_physical_stage_test.dart test/groq_wav_pr79_new_negative_contract_test.dart \
+            lib/groq_native_aac_bridge.dart test/groq_native_aac_bridge_test.dart
+      - name: Full Flutter regressions
+        run: flutter test
+      - name: Kotlin compile-only
+        run: |
+          (cd android && gradle :app:compileDebugKotlin --no-daemon --console=plain)
+          test ! -e build/app/outputs/flutter-apk/app-debug.apk
+  signing:
+    needs: source-gate
+    if: needs.source-gate.result == 'success' && vars.PUBLIC_APK_SIGNING_ARMED == 'true'
+    environment:
+      name: android-stable-signing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Recheck reviewed source and exact commit
+        env:
+          APPROVED_HEAD: ${{ inputs.approved_head }}
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_HEAD" == "$GITHUB_SHA" && "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$(python3 ci/verify_public_snapshot.py)" == 'PUBLIC_EXPORT_SOURCE_INTEGRITY_READY' ]]
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.8'
+          channel: stable
+          cache: true
+          pub-cache: true
+      - name: Generate verified app and pub dependencies
+        run: |
+          python3 tool/patch_v1_1_4_issue65_import_roster_groq_clock_quality_default_p0.py
+          flutter pub get
+      - name: Restore Owner signer, verify original installed certificate
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [[ -n "${!v:-}" && "${!v}" != *$'\n'* ]] || { echo "::error::MISSING_PROTECTED_SIGNER"; exit 1; }
+          done
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          CERT="$(keytool -exportcert -keystore android/app/upload-keystore.jks -alias "$ANDROID_KEY_ALIAS" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD | sha256sum | cut -d' ' -f1 | tr '[:lower:]' '[:upper:]')"
+          [[ "$CERT" == '211EBB33C98359E8F49F0423231826DF22B04643BE418754C939ECB2FFC1435D' ]] || {
+            echo "::error::OWNER_SIGNING_CERT_MISMATCH"; exit 1;
+          }
+          printf 'storeFile=app/upload-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" > android/upload-keystore.properties
+      - name: Build stable-signed APK
+        env:
+          APK_TYPE: ${{ inputs.apk_type }}
+        run: |
+          set -euo pipefail
+          case "$APK_TYPE" in
+            debug) flutter build apk --debug ;;
+            release) flutter build apk --release ;;
+            *) exit 1 ;;
+          esac
+      - name: Verify APK certificate, package, version, SHA256 and immutable HEAD
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          APK_TYPE: ${{ inputs.apk_type }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="build/app/outputs/flutter-apk/app-${APK_TYPE}.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          [[ -s "$APK" && -x "$APKSIGNER" && -x "$AAPT" ]]
+          python3 tool/verify_signed_android_apk.py --apk "$APK" \
+            --keystore android/app/upload-keystore.jks --alias "$ANDROID_KEY_ALIAS" \
+            --password-env ANDROID_KEYSTORE_PASSWORD --apksigner "$APKSIGNER" --aapt "$AAPT" \
+            --expected-head "$GITHUB_SHA" --manifest-out "$APK.provenance.json"
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f android/upload-keystore.properties android/app/upload-keystore.jks
+      - name: Upload debug APK only after verification
+        if: inputs.apk_type == 'debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-recorder-stable-debug
+          path: |
+            build/app/outputs/flutter-apk/app-debug.apk
+            build/app/outputs/flutter-apk/app-debug.apk.provenance.json
+          if-no-files-found: error
+          retention-days: 5
+      - name: Upload release APK only after verification
+        if: inputs.apk_type == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-recorder-stable-release
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/app-release.apk.provenance.json
+          if-no-files-found: error
+          retention-days: 30

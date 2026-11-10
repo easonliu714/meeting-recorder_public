@@ -26,6 +26,8 @@ BOOTSTRAP_FILES = {
     "ci/audit_private_git_head.py",
     "ci/tests/test_audit_private_git_head.py",
     ".github/workflows/public-ci.yml",
+    ".github/workflows/public-apk-manual.yml",
+    "ci/tests/test_public_apk_manual_contract.py",
 }
 MANIFEST = "ci/public_snapshot_manifest.json"
 ROOT_SOURCE_FILES = {
