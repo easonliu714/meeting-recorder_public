@@ -26,7 +26,8 @@ jobs:
           persist-credentials: false
 
       - name: Validate publication guard positive and negative tests
-        run: python3 -m unittest discover -s ci/tests -p 'test_*.py' -v
+        # Avoid writing untracked __pycache__ into the snapshot during audit.
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ci/tests -p 'test_*.py' -v
 
       - name: Verify exact public snapshot files and safety boundary
         id: guard
