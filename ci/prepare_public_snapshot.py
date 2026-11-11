@@ -49,7 +49,8 @@ def git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def tracked_entries(repo: Path, head: str) -> list[tuple[str, str, str]]:
+def tracked_entries(repo: Path, head: str,
+                    approved_paths: set[str] | None = None) -> list[tuple[str, str, str]]:
     """Read immutable Git tree objects, never untracked working-tree bytes."""
     entries = []
     for item in git(repo, "ls-tree", "-r", "-z", head).split(b"\0"):
@@ -66,6 +67,11 @@ def tracked_entries(repo: Path, head: str) -> list[tuple[str, str, str]]:
                 PurePosixPath(path).as_posix() != path):
             raise PublicationHold("GIT_PATH_HOLD")
         if not _allowed_source(path):
+            continue
+        # The approved scope is intentionally a minimal subset of eligible
+        # source files. Never export every candidate merely because it matched
+        # a directory prefix; all tracked blobs were separately audited.
+        if approved_paths is not None and path not in approved_paths:
             continue
         if kind != "blob" or mode not in {"100644", "100755"}:
             raise PublicationHold("GIT_SYMLINK_OR_MODE_HOLD:" + path)
@@ -151,7 +157,7 @@ def create_staging(private: Path, public: Path, head: str, destination: Path,
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(public / name, target)
     manifest_rows = []
-    for path, _mode, blob in tracked_entries(private, head):
+    for path, _mode, blob in tracked_entries(private, head, set(approved)):
         content = git(private, "cat-file", "blob", blob)
         digest = inspect_bytes(path, content)
         target = destination / path

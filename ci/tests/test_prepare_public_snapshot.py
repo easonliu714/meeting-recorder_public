@@ -112,6 +112,28 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
             with self.assertRaisesRegex(PublicationHold, "GIT_SYMLINK"):
                 tracked_entries(Path("/does-not-matter"), "a"*40)
 
+    def test_minimal_approved_scope_does_not_export_other_candidates(self):
+        from unittest.mock import patch
+
+        class FakeGit:
+            def __call__(self, *_args):
+                return b"\\0".join([
+                    b"100644 blob " + b"a" * 40 + b"\\tlib/main.dart",
+                    b"100644 blob " + b"b" * 40 + b"\\ttest/main_test.dart",
+                    b"100644 blob " + b"c" * 40 + b"\\ttool/patch_old_private.py",
+                ]) + b"\\0"
+
+        with patch("prepare_public_snapshot.git", new=FakeGit()):
+            rows = tracked_entries(Path("/none"), "a" * 40,
+                                   {"lib/main.dart", "test/main_test.dart"})
+            self.assertEqual([row[0] for row in rows],
+                             ["lib/main.dart", "test/main_test.dart"])
+            with self.assertRaisesRegex(PublicationHold, "FILE_SET"):
+                verify_approved_rows(
+                    [{"path": name, "sha256": "a" * 64} for name, _, _ in rows],
+                    {"lib/main.dart": "a" * 64, "missing.dart": "a" * 64},
+                )
+
     def test_private_test_and_user_media_paths_are_not_exported(self):
         from unittest.mock import patch
         class FakeGit:
