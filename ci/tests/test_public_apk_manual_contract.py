@@ -21,7 +21,7 @@ class ManualApkGateTests(unittest.TestCase):
                          "unittest discover -s tool/tests"):
             self.assertIn(required, self.s)
         self.assertLess(self.s.index("name: Full Flutter regressions"),
-                        self.s.index("name: Restore Owner signer"))
+                        self.s.index("name: Restore new independent Public signer"))
     def test_new_public_signer_attestation_before_artifact(self):
         for required in ("secrets.ANDROID_KEYSTORE_BASE64", "secrets.ANDROID_KEYSTORE_PASSWORD",
                          "secrets.ANDROID_KEY_ALIAS", "secrets.ANDROID_KEY_PASSWORD",
