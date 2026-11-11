@@ -44,6 +44,35 @@ The original static **Noto Sans TC Regular/Bold** files (7,109,460 / 7,104,212 b
 The offline exporter now scans **every tracked text blob** of the local exact Private Git HEAD, even sources excluded from the later public mirror; it does not rely solely on the manifest's claimed SHA. It forbids tracked signing properties, credential-like strings and personal-contact patterns, and requires the **original Private HEAD** to ignore `android/upload-keystore.properties` and the `.jks` signing key. This is a real pre-existing Private `.gitignore` vulnerability: the workflow generates unquoted `storePassword` and `keyPassword` fields, but the Private head does not ignore its `upload-keystore.properties`. **Do not copy or publish Private Source/Test while this hold remains.** This does not certify license or media rights. The tool does not push or run a Provider; tests use only synthetic Git repositories.
 
 
-## Public manual stable-signed Android APK (DISARMED)
+## Independent Public Android APK, new signer (DISARMED)
 
-The new manual-only workflow .github/workflows/public-apk-manual.yml requires immutable approved main HEAD, reviewed SOURCE_INTEGRITY_READY manifest and all Python/Flutter/Analyzer/Kotlin checks before any signing job. The signing job is disabled unless Owner explicitly sets repository variable PUBLIC_APK_SIGNING_ARMED=true after configuring protected GitHub Environment android-stable-signing with required reviewer and main-only restrictions. The existing Owner JKS must be supplied manually as four Environment secrets; never copy key/passwords into Git commits, chat, source manifests or artifacts. The certificate fingerprint must match 211EBB33C98359E8F49F0423231826DF22B04643BE418754C939ECB2FFC1435D. After an authorized build, verify application ID, version, minSdk, inner APK SHA256 and ZIP hash independently. This scaffold does NOT mean source/asset rights are cleared, signer secrets are installed, APK built or UAT ready.
+Owner approved on 2026-11-11: original Private signing JKS backup is unavailable.
+Public APKs MUST NOT overwrite Private installs or Private user data. New Public
+applicationId: com.example.meeting_recorder.public; historical Private ID:
+com.example.meeting_recorder. Public builds use a NEW keypair kept in a securely
+backed up JKS. Later Public APK updates must use the SAME new key and App ID
+with an increasing versionCode; the two apps have separate storage.
+
+Owner attests assets/app_icon.png was co-designed with ChatGPT, no third-party
+stock/asset-library source, and approves publication. Inspect generated Android
+launcher PNG assets against this icon before including them in the public export.
+OpenAI image output ownership is subject to applicable terms; this attestation
+does not grant a general open-source license to the application's source code.
+
+Signing remains disabled: manually dispatch only after full immutable Private
+source/rights review and PUBLIC_EXPORT_SOURCE_INTEGRITY_READY; the generated
+android/app/build.gradle.kts must contain exactly one Public applicationId,
+checked with ci/verify_public_apk_identity.py --check-source. Provision GitHub
+Environment android-stable-signing with main-only restrictions and Owner-required
+reviewers; create and independently back up a NEW Public JKS in a trusted local
+environment. Enter protected Environment secrets ANDROID_KEYSTORE_BASE64,
+ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD,
+and Environment variable PUBLIC_SIGNER_SHA256 (new DER certificate SHA256).
+Both missing fingerprint and any use of the Private legacy certificate are
+blocking failures. Only then may Owner enable PUBLIC_APK_SIGNING_ARMED=true.
+Do not paste JKS, passwords or base64 into chat, repo or logs.
+
+The workflow checks the new signer before signing, and after build verifies
+apksigner cryptographic validity, Public-only applicationId, minSdk21, version,
+APK SHA256, exact-head provenance and artifact retention. No signed APK exists
+yet. Private Linux Hosted CI is retained until full Public source-parity PASS.

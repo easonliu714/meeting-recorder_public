@@ -1,4 +1,4 @@
-name: Public APK stable signer — gated manual delivery
+name: Public APK separate app and new signer — manual-only
 on:
   workflow_dispatch:
     inputs:
@@ -37,7 +37,7 @@ jobs:
           [[ "$APPROVED_HEAD" =~ ^[0-9a-f]{40}$ ]]
           [[ "$APPROVED_HEAD" == "$GITHUB_SHA" && "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
           [[ "$(python3 ci/verify_public_snapshot.py)" == 'PUBLIC_EXPORT_SOURCE_INTEGRITY_READY' ]]
-          test -f tool/verify_signed_android_apk.py
+          test -f ci/verify_public_apk_identity.py
       - name: Public positive and negative safety contracts
         run: python3 -m unittest discover -s ci/tests -p 'test_*.py' -v
       - uses: actions/setup-java@v4
@@ -53,8 +53,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.12'
-      - name: Source generator
-        run: python3 tool/patch_v1_1_4_issue65_import_roster_groq_clock_quality_default_p0.py
+      - name: Source generator and Public-only package verification
+        run: |
+          python3 tool/patch_v1_1_4_issue65_import_roster_groq_clock_quality_default_p0.py
+          python3 ci/verify_public_apk_identity.py --check-source android/app/build.gradle.kts
       - name: Flutter dependencies
         run: flutter pub get
       - name: Python source regressions
@@ -99,28 +101,34 @@ jobs:
           channel: stable
           cache: true
           pub-cache: true
-      - name: Generate verified app and pub dependencies
+      - name: Generate Public-only app and pub dependencies
         run: |
           python3 tool/patch_v1_1_4_issue65_import_roster_groq_clock_quality_default_p0.py
+          python3 ci/verify_public_apk_identity.py --check-source android/app/build.gradle.kts
           flutter pub get
-      - name: Restore Owner signer, verify original installed certificate
+      - name: Restore new independent Public signer and verify pinned certificate
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PUBLIC_SIGNER_SHA256: ${{ vars.PUBLIC_SIGNER_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
           for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
             [[ -n "${!v:-}" && "${!v}" != *$'\n'* ]] || { echo "::error::MISSING_PROTECTED_SIGNER"; exit 1; }
           done
+          PRIVATE_CERT='211EBB33C98359E8F49F0423231826DF22B04643BE418754C939ECB2FFC1435D'
+          [[ "$PUBLIC_SIGNER_SHA256" =~ ^[0-9A-F]{64}$ && "$PUBLIC_SIGNER_SHA256" != "$PRIVATE_CERT" ]] || {
+            echo "::error::PUBLIC_SIGNER_UNPINNED_OR_LEGACY"; exit 1;
+          }
           umask 077
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
           CERT="$(keytool -exportcert -keystore android/app/upload-keystore.jks -alias "$ANDROID_KEY_ALIAS" \
             -storepass:env ANDROID_KEYSTORE_PASSWORD | sha256sum | cut -d' ' -f1 | tr '[:lower:]' '[:upper:]')"
-          [[ "$CERT" == '211EBB33C98359E8F49F0423231826DF22B04643BE418754C939ECB2FFC1435D' ]] || {
-            echo "::error::OWNER_SIGNING_CERT_MISMATCH"; exit 1;
+          [[ "$CERT" == "$PUBLIC_SIGNER_SHA256" ]] || {
+            echo "::error::PUBLIC_SIGNER_CERT_MISMATCH"; exit 1;
           }
           printf 'storeFile=app/upload-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
             "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" > android/upload-keystore.properties
@@ -139,6 +147,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           APK_TYPE: ${{ inputs.apk_type }}
+          PUBLIC_SIGNER_SHA256: ${{ vars.PUBLIC_SIGNER_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -146,9 +155,8 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
           [[ -s "$APK" && -x "$APKSIGNER" && -x "$AAPT" ]]
-          python3 tool/verify_signed_android_apk.py --apk "$APK" \
-            --keystore android/app/upload-keystore.jks --alias "$ANDROID_KEY_ALIAS" \
-            --password-env ANDROID_KEYSTORE_PASSWORD --apksigner "$APKSIGNER" --aapt "$AAPT" \
+          python3 ci/verify_public_apk_identity.py --apk "$APK" \
+            --apksigner "$APKSIGNER" --aapt "$AAPT" --expected-signer "$PUBLIC_SIGNER_SHA256" \
             --expected-head "$GITHUB_SHA" --manifest-out "$APK.provenance.json"
       - name: Remove temporary signing key
         if: always()
@@ -157,7 +165,7 @@ jobs:
         if: inputs.apk_type == 'debug'
         uses: actions/upload-artifact@v4
         with:
-          name: meeting-recorder-stable-debug
+          name: meeting-recorder-public-debug
           path: |
             build/app/outputs/flutter-apk/app-debug.apk
             build/app/outputs/flutter-apk/app-debug.apk.provenance.json
@@ -167,7 +175,7 @@ jobs:
         if: inputs.apk_type == 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: meeting-recorder-stable-release
+          name: meeting-recorder-public-release
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/flutter-apk/app-release.apk.provenance.json

@@ -22,14 +22,17 @@ class ManualApkGateTests(unittest.TestCase):
             self.assertIn(required, self.s)
         self.assertLess(self.s.index("name: Full Flutter regressions"),
                         self.s.index("name: Restore Owner signer"))
-    def test_original_signer_attestation_before_artifact(self):
+    def test_new_public_signer_attestation_before_artifact(self):
         for required in ("secrets.ANDROID_KEYSTORE_BASE64", "secrets.ANDROID_KEYSTORE_PASSWORD",
                          "secrets.ANDROID_KEY_ALIAS", "secrets.ANDROID_KEY_PASSWORD",
-                         "211EBB33C98359E8F49F0423231826DF22B04643BE418754C939ECB2FFC1435D",
-                         "tool/verify_signed_android_apk.py", "--expected-head", "--manifest-out",
+                         "PUBLIC_SIGNER_SHA256", "PUBLIC_SIGNER_UNPINNED_OR_LEGACY",
+                         "PUBLIC_SIGNER_CERT_MISMATCH", "ci/verify_public_apk_identity.py",
+                         "--expected-signer", "--expected-head", "--manifest-out",
                          "retention-days: 5", "retention-days: 30",
-                         "Remove temporary signing key", "OWNER_SIGNING_CERT_MISMATCH"):
+                         "Remove temporary signing key", "PUBLIC_SIGNER_CERT_MISMATCH"):
             self.assertIn(required, self.s)
+        self.assertIn("python3 ci/verify_public_apk_identity.py --check-source android/app/build.gradle.kts", self.s)
+        self.assertIn("com.example.meeting_recorder.public", (WF.parent.parent.parent / "ci/verify_public_apk_identity.py").read_text(encoding="utf-8"))
         self.assertLess(self.s.index("name: Verify APK certificate"),
                         self.s.index("name: Upload debug APK"))
     def test_remove_signing_arm_rule_is_a_contract_regression(self):

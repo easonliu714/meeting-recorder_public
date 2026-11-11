@@ -28,6 +28,8 @@ BOOTSTRAP_FILES = {
     ".github/workflows/public-ci.yml",
     ".github/workflows/public-apk-manual.yml",
     "ci/tests/test_public_apk_manual_contract.py",
+    "ci/verify_public_apk_identity.py",
+    "ci/tests/test_verify_public_apk_identity.py",
 }
 MANIFEST = "ci/public_snapshot_manifest.json"
 ROOT_SOURCE_FILES = {
