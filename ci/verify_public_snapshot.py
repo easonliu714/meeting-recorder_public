@@ -25,6 +25,8 @@ BOOTSTRAP_FILES = {
     "ci/tests/test_font_intake.py",
     "ci/audit_private_git_head.py",
     "ci/tests/test_audit_private_git_head.py",
+    "ci/private_inventory_report.py",
+    "ci/tests/test_private_inventory_report.py",
     ".github/workflows/public-ci.yml",
     ".github/workflows/public-apk-manual.yml",
     "ci/tests/test_public_apk_manual_contract.py",
