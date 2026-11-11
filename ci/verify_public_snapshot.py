@@ -69,10 +69,28 @@ FORBIDDEN_EXTENSIONS = {
     ".sqlite3", ".db", ".zip", ".tar", ".log", ".jsonl", ".png",
     ".jpg", ".jpeg", ".webp", ".ico",
 }
+
+# Owner-approved exact eleven PNG Git blobs, independently verified at Private
+# PR79 and reproduced 10/10 with pinned flutter_launcher_icons 0.13.1.
+# The pins authorize only these bytes, not other Private Source/Test rights.
+OWNER_APPROVED_ICON_GIT_BLOBS = {
+    "android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png": "7f08a66899bd0a1e7064cec782de6b925fdb670a",
+    "android/app/src/main/res/drawable-mdpi/ic_launcher_foreground.png": "776884810a7392f717472b71eeb4b1c92558229c",
+    "android/app/src/main/res/drawable-xhdpi/ic_launcher_foreground.png": "8c9c9045cbf33287ba49a6a5b94d8246c3b14a72",
+    "android/app/src/main/res/drawable-xxhdpi/ic_launcher_foreground.png": "8dd2c173241540841ff31b279ad88613d171b944",
+    "android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png": "e2342a82ccdfcdeeda30245a00c45b09756d73e7",
+    "android/app/src/main/res/mipmap-hdpi/ic_launcher.png": "f053c50b238bc1c9a7f6e7283b1a6ca675db6c6a",
+    "android/app/src/main/res/mipmap-mdpi/ic_launcher.png": "2ee3bfbdfd4a946b9fe398681ebe1c3cbb64ec5f",
+    "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png": "a02e1bf488cccca6580eeefb1a891a94f046111e",
+    "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png": "6a2cedb957a35195728c6aebf5826f959be04fca",
+    "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png": "dfc3d96b2388a583472889a7ab5f02781e2af7bf",
+    "assets/app_icon.png": "1525671bf194a4627a7aa275cbf32528fa8ada49",
+}
+
 BINARY_WHITELIST = {
     "assets/fonts/NotoSansTC-Regular.ttf",
     "assets/fonts/NotoSansTC-Bold.ttf",
-}
+} | set(OWNER_APPROVED_ICON_GIT_BLOBS)
 # H04J exact original Owner font identity: a changed manifest may NOT relabel
 # a modified font as approved. Check the same immutable digests in both
 # bootstrap-intake and full-source modes.
@@ -109,11 +127,13 @@ class PublicationHold(Exception):
 
 def _allowed_source(path: str) -> bool:
     return (
-        (path in ROOT_SOURCE_FILES or path.startswith(SOURCE_PREFIXES))
-        and path not in PRIVATE_ONLY_TESTS
-        and not path.startswith(FORBIDDEN_PREFIXES)
-        and Path(path).name not in FORBIDDEN_NAMES
-        and Path(path).suffix.lower() not in FORBIDDEN_EXTENSIONS
+        path in OWNER_APPROVED_ICON_GIT_BLOBS or (
+            (path in ROOT_SOURCE_FILES or path.startswith(SOURCE_PREFIXES))
+            and path not in PRIVATE_ONLY_TESTS
+            and not path.startswith(FORBIDDEN_PREFIXES)
+            and Path(path).name not in FORBIDDEN_NAMES
+            and Path(path).suffix.lower() not in FORBIDDEN_EXTENSIONS
+        )
     )
 
 
@@ -171,6 +191,10 @@ def audit(root: Path) -> str:
         data = target.read_bytes()
         if hashlib.sha256(data).hexdigest() != expected:
             raise PublicationHold("SOURCE_DIGEST_MISMATCH:" + path)
+        if path in OWNER_APPROVED_ICON_GIT_BLOBS:
+            object_bytes = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+            if hashlib.sha1(object_bytes).hexdigest() != OWNER_APPROVED_ICON_GIT_BLOBS[path]:
+                raise PublicationHold("OWNER_ICON_BLOB_MISMATCH:" + path)
         if path not in BINARY_WHITELIST:
             try:
                 content = data.decode("utf-8")

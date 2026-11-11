@@ -19,6 +19,7 @@ import tempfile
 from audit_private_git_head import inspect_private_head
 from verify_public_snapshot import (
     BINARY_WHITELIST, BOOTSTRAP_FILES, MANIFEST, REQUIRED_SOURCE_FILES,
+    OWNER_APPROVED_ICON_GIT_BLOBS,
     SENSITIVE_PATTERNS, PublicationHold, _allowed_source, audit,
 )
 
@@ -81,6 +82,10 @@ def inspect_bytes(path: str, data: bytes) -> str:
     expected = EXPECTED_FONT_ASSETS.get(path)
     if expected and (len(data), digest) != expected:
         raise PublicationHold("ORIGINAL_FONT_OR_OFL_INTEGRITY_HOLD:" + path)
+    if path in OWNER_APPROVED_ICON_GIT_BLOBS:
+        object_bytes = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+        if hashlib.sha1(object_bytes).hexdigest() != OWNER_APPROVED_ICON_GIT_BLOBS[path]:
+            raise PublicationHold("OWNER_ICON_BLOB_MISMATCH_HOLD:" + path)
     if path in BINARY_WHITELIST:
         return digest
     if len(data) > 1_000_000 or b"\0" in data:
@@ -94,7 +99,47 @@ def inspect_bytes(path: str, data: bytes) -> str:
     return digest
 
 
-def create_staging(private: Path, public: Path, head: str, destination: Path) -> dict:
+
+def read_approved_scope(path: Path, head: str) -> dict[str, str]:
+    """Local per-file human rights/privacy sign-off; never a public artifact.
+
+    A regex-only PASS, icon approval, or a matching SHA does not authorize
+    unrelated application code. This review input must be held privately.
+    """
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise PublicationHold("PRIVATE_SCOPE_APPROVAL_MISSING_OR_INVALID_HOLD") from exc
+    if (not isinstance(doc, dict) or set(doc) !=
+            {"schema", "private_source_head", "files"} or
+            doc["schema"] != 1 or doc["private_source_head"] != head or
+            not isinstance(doc["files"], list) or not doc["files"]):
+        raise PublicationHold("PRIVATE_SCOPE_HEAD_OR_SCHEMA_HOLD")
+    approved: dict[str, str] = {}
+    for row in doc["files"]:
+        if (not isinstance(row, dict) or set(row) !=
+                {"path", "sha256", "rights", "privacy"}):
+            raise PublicationHold("PRIVATE_SCOPE_ROW_SCHEMA_HOLD")
+        name, digest = row["path"], row["sha256"]
+        if (not isinstance(name, str) or not isinstance(digest, str) or
+                not _allowed_source(name) or not re.fullmatch(r"[0-9a-f]{64}", digest) or
+                name in approved or row["rights"] != "OWNER_PASS" or
+                row["privacy"] != "REVIEW_PASS"):
+            raise PublicationHold("PRIVATE_SCOPE_UNAPPROVED_OR_DUPLICATE_HOLD")
+        approved[name] = digest
+    return approved
+
+
+def verify_approved_rows(rows: list[dict], approved: dict[str, str]) -> None:
+    """Fail closed on missing, extra, or changed source relative to review."""
+    if {row["path"] for row in rows} != set(approved):
+        raise PublicationHold("PRIVATE_SCOPE_FILE_SET_MISMATCH_HOLD")
+    if any(row["sha256"] != approved[row["path"]] for row in rows):
+        raise PublicationHold("PRIVATE_SCOPE_SHA256_MISMATCH_HOLD")
+
+
+def create_staging(private: Path, public: Path, head: str, destination: Path,
+                   approved: dict[str, str]) -> dict:
     if not HEX40.fullmatch(head):
         raise PublicationHold("INVALID_PRIVATE_HEAD")
     if git(private, "rev-parse", "HEAD").decode().strip() != head:
@@ -113,6 +158,7 @@ def create_staging(private: Path, public: Path, head: str, destination: Path) ->
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         manifest_rows.append({"path": path, "sha256": digest})
+    verify_approved_rows(manifest_rows, approved)
     exported = {row["path"] for row in manifest_rows}
     if not REQUIRED_SOURCE_FILES.issubset(exported):
         raise PublicationHold("PRIVATE_REQUIRED_SOURCE_MISSING_HOLD")
@@ -126,7 +172,8 @@ def create_staging(private: Path, public: Path, head: str, destination: Path) ->
     return manifest
 
 
-def prepare(private: Path, public: Path, head: str, apply: bool = False) -> int:
+def prepare(private: Path, public: Path, head: str, approval_manifest: Path,
+            apply: bool = False) -> int:
     # Verify the local checkout is the intended private repo, not a fork or
     # accidentally reused public clone. Only immutable tracked blobs are read.
     private_remote = git(private, "remote", "get-url", "origin").decode().strip()
@@ -138,9 +185,10 @@ def prepare(private: Path, public: Path, head: str, apply: bool = False) -> int:
     # catches sensitive material even under excluded docs/CI files and refuses
     # the original Private signing-properties .gitignore vulnerability.
     inspect_private_head(private, head)
+    approved = read_approved_scope(approval_manifest, head)
     with tempfile.TemporaryDirectory(prefix="mr-public-export-") as temp:
         staged = Path(temp)
-        manifest = create_staging(private, public, head, staged)
+        manifest = create_staging(private, public, head, staged, approved)
         if not apply:
             print("PUBLIC_SNAPSHOT_DRY_RUN_PASS_SOURCE_FILES=" + str(len(manifest["files"])))
             print("PUBLIC_SNAPSHOT_NO_PUBLIC_WRITE")
@@ -178,11 +226,13 @@ def main() -> int:
     parser.add_argument("--private-root", required=True, type=Path)
     parser.add_argument("--public-root", required=True, type=Path)
     parser.add_argument("--private-head", required=True)
+    parser.add_argument("--approval-manifest", required=True, type=Path,
+                        help="Private local per-file Owner rights and privacy review; never commit")
     parser.add_argument("--apply", action="store_true", help="Copy only after full dry-run audit; NEVER push")
     args = parser.parse_args()
     try:
         prepare(args.private_root.resolve(), args.public_root.resolve(),
-                args.private_head, apply=args.apply)
+                args.private_head, args.approval_manifest.resolve(), apply=args.apply)
     except PublicationHold as exc:
         print("PUBLIC_EXPORT_HOLD:" + str(exc))
         return 1

@@ -1,5 +1,7 @@
 """Fail-closed, zero-network tests for local sanitized Public snapshot export."""
 import hashlib
+import json
+import tempfile
 from pathlib import Path
 import sys
 import unittest
@@ -7,10 +9,57 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_public_snapshot import (  # noqa: E402
     EXPECTED_FONT_ASSETS, PublicationHold, inspect_bytes, tracked_entries,
+    read_approved_scope, verify_approved_rows,
+)
+from verify_public_snapshot import (  # noqa: E402
+    OWNER_APPROVED_ICON_GIT_BLOBS, _allowed_source,
 )
 
 
 class LocalPublicSnapshotExportTests(unittest.TestCase):
+
+    def test_exact_owner_icon_allowlist_only_not_arbitrary_png(self):
+        self.assertEqual(len(OWNER_APPROVED_ICON_GIT_BLOBS), 11)
+        for path in OWNER_APPROVED_ICON_GIT_BLOBS:
+            with self.subTest(path=path):
+                self.assertTrue(_allowed_source(path))
+                with self.assertRaisesRegex(PublicationHold, "OWNER_ICON_BLOB_MISMATCH"):
+                    inspect_bytes(path, b"fake png or unapproved replacement")
+        for path in ("assets/owner_photo.png", "web/icons/Icon-192.png",
+                     "android/app/src/main/res/mipmap-mdpi/private.png"):
+            self.assertFalse(_allowed_source(path))
+
+    def test_private_scope_approval_exact_head_rights_and_privacy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "private-scope.json"
+            row = {"path": "lib/main.dart", "sha256": "a" * 64,
+                   "rights": "OWNER_PASS", "privacy": "REVIEW_PASS"}
+            doc = {"schema": 1, "private_source_head": "b" * 40,
+                   "files": [row]}
+            p.write_text(json.dumps(doc), encoding="utf-8")
+            self.assertEqual(read_approved_scope(p, "b" * 40),
+                             {"lib/main.dart": "a" * 64})
+            with self.assertRaisesRegex(PublicationHold, "HEAD_OR_SCHEMA"):
+                read_approved_scope(p, "c" * 40)
+            for key, value in (("rights", "HOLD"), ("privacy", "HOLD")):
+                bad = json.loads(json.dumps(doc))
+                bad["files"][0][key] = value
+                p.write_text(json.dumps(bad), encoding="utf-8")
+                with self.assertRaisesRegex(PublicationHold, "UNAPPROVED"):
+                    read_approved_scope(p, "b" * 40)
+            doc["files"].append(dict(row))
+            p.write_text(json.dumps(doc), encoding="utf-8")
+            with self.assertRaisesRegex(PublicationHold, "DUPLICATE"):
+                read_approved_scope(p, "b" * 40)
+
+    def test_approved_source_scope_must_match_every_path_and_sha(self):
+        rows = [{"path": "lib/main.dart", "sha256": "a" * 64}]
+        verify_approved_rows(rows, {"lib/main.dart": "a" * 64})
+        with self.assertRaisesRegex(PublicationHold, "FILE_SET"):
+            verify_approved_rows(rows, {"lib/other.dart": "a" * 64})
+        with self.assertRaisesRegex(PublicationHold, "SHA256"):
+            verify_approved_rows(rows, {"lib/main.dart": "b" * 64})
+
     def test_owner_original_font_and_ofl_pins_do_not_drift(self):
         self.assertEqual(set(EXPECTED_FONT_ASSETS), {
             "assets/fonts/NotoSansTC-Regular.ttf",
