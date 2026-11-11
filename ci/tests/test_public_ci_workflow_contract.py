@@ -28,6 +28,21 @@ class PublicWorkflowContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.workflow)
 
+    def test_security_guard_runs_before_external_aac_install(self):
+        first = self.workflow.index("Validate publication guard positive and negative tests")
+        audit = self.workflow.index("Verify exact public snapshot files and safety boundary")
+        apt = self.workflow.index("Verify physical AAC offline toolchain")
+        full = self.workflow.index("Run all publication tests including real offline AAC")
+        self.assertLess(first, audit)
+        self.assertLess(audit, apt)
+        self.assertLess(apt, full)
+        self.assertIn("timeout 120s sudo apt-get update", self.workflow)
+        self.assertIn("timeout 180s sudo apt-get install", self.workflow)
+        self.assertIn("python3 -m unittest discover -s ci/tests", self.workflow)
+        unsafe = self.workflow.replace("timeout 120s sudo apt-get update",
+                                       "sudo apt-get update")
+        self.assertNotIn("timeout 120s sudo apt-get update", unsafe)
+
     def test_source_integrity_blocks_application_without_snapshot(self):
         self.assertIn("id: guard", self.workflow)
         self.assertIn("python3 ci/verify_public_snapshot.py", self.workflow)
