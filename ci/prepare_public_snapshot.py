@@ -212,6 +212,23 @@ def create_staging(private: Path, public: Path, head: str, destination: Path,
     return manifest
 
 
+
+def verify_public_checkout_clean(public: Path, expected_head: str | None = None) -> str:
+    """Reject local edits and concurrent HEAD changes before any source staging.
+
+    A structurally valid bootstrap is not necessarily the reviewed Git
+    checkout. In particular, modified guard/workflow files must never be
+    copied into the staged Public snapshot. No private files are touched.
+    """
+    head = git(public, "rev-parse", "HEAD").decode("ascii").strip()
+    if not HEX40.fullmatch(head) or (
+            expected_head is not None and head != expected_head):
+        raise PublicationHold("PUBLIC_HEAD_DRIFT_HOLD")
+    if git(public, "status", "--porcelain=v1", "-z", "--untracked-files=all"):
+        raise PublicationHold("PUBLIC_WORKTREE_DIRTY_HOLD")
+    return head
+
+
 def prepare(private: Path, public: Path, head: str, approval_manifest: Path,
             apply: bool = False) -> int:
     # Verify the local checkout is the intended private repo, not a fork or
@@ -221,6 +238,7 @@ def prepare(private: Path, public: Path, head: str, approval_manifest: Path,
     if (not re.search(r"easonliu714/meeting-recorder(?:\.git)?$", private_remote) or
             not re.search(r"easonliu714/meeting-recorder_public(?:\.git)?$", public_remote)):
         raise PublicationHold("REPOSITORY_IDENTITY_HOLD")
+    public_head = verify_public_checkout_clean(public)
     # Scan ALL tracked Private exact-HEAD blobs before selective export. This
     # catches sensitive material even under excluded docs/CI files and refuses
     # the original Private signing-properties .gitignore vulnerability.
@@ -229,6 +247,9 @@ def prepare(private: Path, public: Path, head: str, approval_manifest: Path,
     with tempfile.TemporaryDirectory(prefix="mr-public-export-") as temp:
         staged = Path(temp)
         manifest = create_staging(private, public, head, staged, approved)
+        # Recheck after the potentially lengthy full Private scan and staging.
+        # This also prevents a dry-run PASS on a concurrently changed checkout.
+        verify_public_checkout_clean(public, expected_head=public_head)
         if not apply:
             print("PUBLIC_SNAPSHOT_DRY_RUN_PASS_SOURCE_FILES=" + str(len(manifest["files"])))
             print("PUBLIC_SNAPSHOT_NO_PUBLIC_WRITE")

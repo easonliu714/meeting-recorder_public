@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_public_snapshot import (  # noqa: E402
     EXPECTED_FONT_ASSETS, PublicationHold, inspect_bytes, tracked_entries,
     read_approved_scope, verify_approved_rows, transform_public_source, git,
+    verify_public_checkout_clean,
 )
 from verify_public_snapshot import (  # noqa: E402
     OWNER_APPROVED_ICON_GIT_BLOBS, _allowed_source,
@@ -182,6 +183,44 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
                 tracked_entries(Path("/none"), "a"*40),
                 [("lib/groq_policy.dart", "100644", "a"*40)],
             )
+
+    def test_public_checkout_guard_rejects_dirty_and_head_drift(self):
+        # Real local Git fixture: do not confuse a passing structural guard
+        # with an immutable reviewed checkout or a safe concurrent handoff.
+        with tempfile.TemporaryDirectory(prefix="public-head-guard-") as tmp:
+            root = Path(tmp) / "public"
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "config",
+                            "user.email", "ci@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(root), "config",
+                            "user.name", "Synthetic CI"], check=True)
+            readme = root / "README.md"
+            readme.write_text("reviewed bootstrap", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm",
+                            "Initial reviewed bootstrap"], check=True)
+            head = git(root, "rev-parse", "HEAD").decode("ascii").strip()
+            self.assertEqual(verify_public_checkout_clean(root), head)
+            self.assertEqual(verify_public_checkout_clean(root, head), head)
+
+            readme.write_text("unreviewed bootstrap", encoding="utf-8")
+            with self.assertRaisesRegex(PublicationHold, "WORKTREE_DIRTY"):
+                verify_public_checkout_clean(root, head)
+            readme.write_text("reviewed bootstrap", encoding="utf-8")
+
+            extra = root / "untracked-secret.txt"
+            extra.write_text("never publish", encoding="utf-8")
+            with self.assertRaisesRegex(PublicationHold, "WORKTREE_DIRTY"):
+                verify_public_checkout_clean(root, head)
+            extra.unlink()
+
+            readme.write_text("new committed bootstrap", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm",
+                            "Concurrent writer"], check=True)
+            self.assertNotEqual(verify_public_checkout_clean(root), head)
+            with self.assertRaisesRegex(PublicationHold, "HEAD_DRIFT"):
+                verify_public_checkout_clean(root, head)
 
     def test_exporter_git_read_ignores_foreign_git_dir_and_object_store(self):
         with tempfile.TemporaryDirectory(prefix="export-git-env-") as tmp:
