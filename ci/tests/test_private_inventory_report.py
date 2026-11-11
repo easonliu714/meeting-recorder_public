@@ -75,8 +75,33 @@ class ConfidentialInventoryTests(unittest.TestCase):
         self.assertEqual(row["sha256"], hashlib.sha256(b"void main() {}\n").hexdigest())
         self.git("-C", str(self.private), "remote", "set-url", "origin",
                  "https://github.com/foreign/meeting-recorder.git")
-        with self.assertRaisesRegex(PublicationHold, "PRIVATE_ORIGIN"):
+        with self.assertRaisesRegex(PublicationHold, "REPOSITORY_IDENTITY_HOLD"):
             inventory_private_head(self.private, self.head)
+
+    def test_inventory_rejects_lookalike_github_origins_before_reading_blobs(self):
+        # Negative: suffix-based origin matching must not trust a lookalike host,
+        # URL userinfo, an extra path component, or a foreign SSH host.
+        forged = (
+            "https://notgithub.com/easonliu714/meeting-recorder.git",
+            "https://github.com@evil.example/easonliu714/meeting-recorder.git",
+            "ssh://git@github.com.evil.example/easonliu714/meeting-recorder.git",
+            "https://github.com/easonliu714/meeting-recorder.git/extra",
+        )
+        for remote in forged:
+            with self.subTest(remote=remote):
+                self.git("-C", str(self.private), "remote", "set-url", "origin", remote)
+                with self.assertRaisesRegex(PublicationHold, "REPOSITORY_IDENTITY_HOLD"):
+                    inventory_private_head(self.private, self.head)
+        # Positive: exact HTTPS and SSH canonical origins still work.
+        for remote in (
+            "https://github.com/easonliu714/meeting-recorder.git",
+            "git@github.com:easonliu714/meeting-recorder.git",
+        ):
+            with self.subTest(remote=remote):
+                self.git("-C", str(self.private), "remote", "set-url", "origin", remote)
+                report = inventory_private_head(self.private, self.head)
+                self.assertEqual(report["private_source_head"], self.head)
+                self.assertEqual(len(report["files"]), 6)
 
     def test_report_is_private_0600_and_never_inside_public_or_private(self):
         report = inventory_private_head(self.private, self.head)
