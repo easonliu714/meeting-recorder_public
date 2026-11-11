@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import tempfile
 
-from audit_private_git_head import inspect_private_head
+from audit_private_git_head import inspect_private_head, sanitized_git_env
 from verify_public_snapshot import (
     BINARY_WHITELIST, BOOTSTRAP_FILES, MANIFEST, REQUIRED_SOURCE_FILES,
     OWNER_APPROVED_ICON_GIT_BLOBS, PUBLIC_APP_ID, PUBLIC_GRADLE_PATH,
@@ -43,6 +43,7 @@ def git(repo: Path, *args: str) -> bytes:
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        env=sanitized_git_env(),
     )
     if result.returncode:
         raise PublicationHold("LOCAL_GIT_READ_HOLD:" + args[0])

@@ -10,6 +10,7 @@ and does not print matched secret values. Its execution is local only.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -38,10 +39,24 @@ PROPERTIES_SECRET = re.compile(
 TAIWAN_MOBILE = re.compile(r"(?<!\d)(?:\+886[- ]?9\d{8}|09\d{8})(?!\d)")
 
 
+def sanitized_git_env() -> dict[str, str]:
+    """Read immutable local Git objects without inherited repository overrides.
+
+    GIT_DIR, GIT_WORK_TREE, alternate object stores and injected Git config
+    must never redirect a confidential scan to a different checkout.
+    """
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("GIT_")}
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    return env
+
+
 def private_git(root: Path, *args: str) -> bytes:
     process = subprocess.run(
         ["git", "-C", str(root), *args],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        env=sanitized_git_env(),
     )
     if process.returncode:
         # Do not echo git stderr; it may include credentials from remotes.

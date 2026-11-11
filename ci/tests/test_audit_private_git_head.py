@@ -1,5 +1,7 @@
 """Local synthetic Git tests: never connect to a real private repository."""
 from pathlib import Path
+import os
+from unittest.mock import patch
 import subprocess
 import sys
 import tempfile
@@ -94,6 +96,22 @@ class PrivateExactHeadAuditTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertFalse(_allowed_source(path))
+
+    def test_foreign_git_environment_cannot_redirect_private_blob_scan(self):
+        head = self.git("-C", str(self.root), "rev-parse", "HEAD")
+        with tempfile.TemporaryDirectory(prefix="foreign-git-") as tmp:
+            foreign = Path(tmp)
+            self.git("init", "-q", foreign.as_posix())
+            # The same environment would redirect a plain git -C invocation.
+            with patch.dict(os.environ, {
+                "GIT_DIR": str(foreign / ".git"),
+                "GIT_WORK_TREE": str(foreign),
+                "GIT_OBJECT_DIRECTORY": str(foreign / ".git" / "objects"),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.bare",
+                "GIT_CONFIG_VALUE_0": "true",
+            }):
+                self.assertEqual(inspect_private_head(self.root, head), (3, 0))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
 """Fail-closed, zero-network tests for local sanitized Public snapshot export."""
 import hashlib
 import json
+import os
+import subprocess
+from unittest.mock import patch
 import tempfile
 from pathlib import Path
 import sys
@@ -9,7 +12,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_public_snapshot import (  # noqa: E402
     EXPECTED_FONT_ASSETS, PublicationHold, inspect_bytes, tracked_entries,
-    read_approved_scope, verify_approved_rows, transform_public_source,
+    read_approved_scope, verify_approved_rows, transform_public_source, git,
 )
 from verify_public_snapshot import (  # noqa: E402
     OWNER_APPROVED_ICON_GIT_BLOBS, _allowed_source,
@@ -179,6 +182,38 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
                 tracked_entries(Path("/none"), "a"*40),
                 [("lib/groq_policy.dart", "100644", "a"*40)],
             )
+
+    def test_exporter_git_read_ignores_foreign_git_dir_and_object_store(self):
+        with tempfile.TemporaryDirectory(prefix="export-git-env-") as tmp:
+            root = Path(tmp)
+            private = root / "private"
+            foreign = root / "foreign"
+            for directory in (private, foreign):
+                subprocess.run(["git", "init", "-q", str(directory)],
+                               check=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", str(private), "config",
+                            "user.email", "ci@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(private), "config",
+                            "user.name", "Synthetic CI"], check=True)
+            (private / "marker.txt").write_text("private exact-head", encoding="utf-8")
+            subprocess.run(["git", "-C", str(private), "add", "marker.txt"], check=True)
+            subprocess.run(["git", "-C", str(private), "commit", "-qm",
+                            "Synthetic local test"], check=True)
+            expected = subprocess.check_output(
+                ["git", "-C", str(private), "rev-parse", "HEAD"]
+            )
+            with patch.dict(os.environ, {
+                "GIT_DIR": str(foreign / ".git"),
+                "GIT_WORK_TREE": str(foreign),
+                "GIT_OBJECT_DIRECTORY": str(foreign / ".git" / "objects"),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.bare",
+                "GIT_CONFIG_VALUE_0": "true",
+            }):
+                self.assertEqual(git(private, "rev-parse", "HEAD"), expected)
+                self.assertIn(b"marker.txt",
+                              git(private, "ls-tree", "-r", "--name-only", "HEAD"))
 
 
 if __name__ == "__main__":
