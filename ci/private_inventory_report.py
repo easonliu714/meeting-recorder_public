@@ -36,7 +36,9 @@ def inventory_private_head(private: Path, head: str) -> dict:
     if top != private or private_git(private, "rev-parse", "HEAD").decode().strip() != head:
         raise PublicationHold("INVENTORY_CHECKOUT_HEAD_HOLD")
     origin = private_git(private, "remote", "get-url", "origin").decode().strip()
-    # Share the exporter\u0027s exact GitHub owner/host allowlist; a regex suffix\n    # would accept lookalike domains such as notgithub.com.\n    require_trusted_repo_origin(origin, "meeting-recorder")
+    # Share the exporter's exact GitHub owner/host allowlist. A regex suffix
+    # would accept lookalike domains such as notgithub.com.
+    require_trusted_repo_origin(origin, "meeting-recorder")
     rows, seen = [], set()
     for raw in private_git(private, "ls-tree", "-r", "-z", head).split(b"\0"):
         if not raw:
