@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_public_snapshot import (  # noqa: E402
     EXPECTED_FONT_ASSETS, PublicationHold, inspect_bytes, tracked_entries,
     read_approved_scope, verify_approved_rows, transform_public_source, git,
-    verify_public_checkout_clean,
+    verify_public_checkout_clean, require_trusted_repo_origin,
 )
 from verify_public_snapshot import (  # noqa: E402
     OWNER_APPROVED_ICON_GIT_BLOBS, _allowed_source,
@@ -183,6 +183,43 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
                 tracked_entries(Path("/none"), "a"*40),
                 [("lib/groq_policy.dart", "100644", "a"*40)],
             )
+
+    def test_real_git_remote_identity_positive_and_spoofed_negative(self):
+        # Real Git remote reads, no network and no Private checkout.
+        with tempfile.TemporaryDirectory(prefix="public-origin-") as tmp:
+            root = Path(tmp) / "fixture"
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                            "https://github.com/easonliu714/meeting-recorder.git"],
+                           check=True)
+            for name in ("meeting-recorder", "meeting-recorder_public"):
+                good = (
+                    "https://github.com/easonliu714/" + name,
+                    "https://github.com/easonliu714/" + name + ".git",
+                    "git@github.com:easonliu714/" + name + ".git",
+                    "ssh://git@github.com/easonliu714/" + name,
+                )
+                bad = (
+                    "https://evil.example/easonliu714/" + name + ".git",
+                    "https://github.com.evil.example/easonliu714/" + name,
+                    "https://attacker@github.com/easonliu714/" + name,
+                    "http://github.com/easonliu714/" + name,
+                    "https://github.com/foreign/" + name,
+                    "file:///tmp/easonliu714/" + name + ".git",
+                )
+                for remote in good + bad:
+                    with self.subTest(name=name, remote=remote):
+                        subprocess.run(["git", "-C", str(root), "remote",
+                                        "set-url", "origin", remote], check=True)
+                        actual = git(root, "remote", "get-url", "origin").decode().strip()
+                        if remote in good:
+                            require_trusted_repo_origin(actual, name)
+                        else:
+                            with self.assertRaisesRegex(PublicationHold, "REPOSITORY_IDENTITY"):
+                                require_trusted_repo_origin(actual, name)
+            with self.assertRaisesRegex(PublicationHold, "REPOSITORY_IDENTITY"):
+                require_trusted_repo_origin(
+                    "https://github.com/easonliu714/meeting-recorder.git", "other")
 
     def test_public_checkout_guard_rejects_dirty_and_head_drift(self):
         # Real local Git fixture: do not confuse a passing structural guard

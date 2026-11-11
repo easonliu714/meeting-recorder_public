@@ -229,15 +229,31 @@ def verify_public_checkout_clean(public: Path, expected_head: str | None = None)
     return head
 
 
+# Reject lookalike hosts and URL userinfo before touching confidential source.
+# A suffix match alone is not proof of the expected GitHub repository.
+def require_trusted_repo_origin(remote: str, repository: str) -> None:
+    if repository not in ("meeting-recorder", "meeting-recorder_public"):
+        raise PublicationHold("REPOSITORY_IDENTITY_HOLD")
+    canonical = "easonliu714/" + repository
+    allowed = {
+        "https://github.com/" + canonical,
+        "https://github.com/" + canonical + ".git",
+        "git@github.com:" + canonical,
+        "git@github.com:" + canonical + ".git",
+        "ssh://git@github.com/" + canonical,
+        "ssh://git@github.com/" + canonical + ".git",
+    }
+    if remote not in allowed:
+        raise PublicationHold("REPOSITORY_IDENTITY_HOLD")
+
+
 def prepare(private: Path, public: Path, head: str, approval_manifest: Path,
             apply: bool = False) -> int:
-    # Verify the local checkout is the intended private repo, not a fork or
-    # accidentally reused public clone. Only immutable tracked blobs are read.
+    # Exact host/owner/repository identity, not a permissive path suffix.
     private_remote = git(private, "remote", "get-url", "origin").decode().strip()
     public_remote = git(public, "remote", "get-url", "origin").decode().strip()
-    if (not re.search(r"easonliu714/meeting-recorder(?:\.git)?$", private_remote) or
-            not re.search(r"easonliu714/meeting-recorder_public(?:\.git)?$", public_remote)):
-        raise PublicationHold("REPOSITORY_IDENTITY_HOLD")
+    require_trusted_repo_origin(private_remote, "meeting-recorder")
+    require_trusted_repo_origin(public_remote, "meeting-recorder_public")
     public_head = verify_public_checkout_clean(public)
     # Scan ALL tracked Private exact-HEAD blobs before selective export. This
     # catches sensitive material even under excluded docs/CI files and refuses
