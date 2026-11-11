@@ -19,7 +19,7 @@ import tempfile
 from audit_private_git_head import inspect_private_head
 from verify_public_snapshot import (
     BINARY_WHITELIST, BOOTSTRAP_FILES, MANIFEST, REQUIRED_SOURCE_FILES,
-    OWNER_APPROVED_ICON_GIT_BLOBS,
+    OWNER_APPROVED_ICON_GIT_BLOBS, PUBLIC_APP_ID, PUBLIC_GRADLE_PATH,
     SENSITIVE_PATTERNS, PublicationHold, _allowed_source, audit,
 )
 
@@ -144,6 +144,32 @@ def verify_approved_rows(rows: list[dict], approved: dict[str, str]) -> None:
         raise PublicationHold("PRIVATE_SCOPE_SHA256_MISMATCH_HOLD")
 
 
+# Preserve the immutable Private input SHA while transforming exactly one
+# Android identity assignment for the independent Public installation.
+def transform_public_source(path: str, original: bytes) -> bytes:
+    if path != PUBLIC_GRADLE_PATH:
+        return original
+    try:
+        text = original.decode("utf-8")
+    except UnicodeError as exc:
+        raise PublicationHold("PUBLIC_GRADLE_NON_UTF8_HOLD") from exc
+    assignments = re.findall(r"(?m)^[ \t]*applicationId[ \t]*=", text)
+    exact = re.compile(
+        r'(?m)^([ \t]*applicationId[ \t]*=[ \t]*)"com\.example\.meeting_recorder"'
+        r'([ \t]*(?://[^\r\n]*)?)$'
+    )
+    if (len(assignments) != 1 or len(exact.findall(text)) != 1 or
+            re.search(r"(?m)^[ \t]*applicationIdSuffix[ \t]*=", text)):
+        raise PublicationHold("PUBLIC_GRADLE_TRANSFORM_SCOPE_HOLD")
+    output = exact.sub(
+        lambda m: m.group(1) + '"' + PUBLIC_APP_ID + '"' + m.group(2),
+        text, count=1,
+    )
+    if re.search(r"com\.example\.meeting_recorder(?!\.public)", output):
+        raise PublicationHold("PUBLIC_GRADLE_LEGACY_ID_REMAINS_HOLD")
+    return output.encode("utf-8")
+
+
 def create_staging(private: Path, public: Path, head: str, destination: Path,
                    approved: dict[str, str]) -> dict:
     if not HEX40.fullmatch(head):
@@ -157,14 +183,21 @@ def create_staging(private: Path, public: Path, head: str, destination: Path,
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(public / name, target)
     manifest_rows = []
+    original_rows = []
     for path, _mode, blob in tracked_entries(private, head, set(approved)):
         content = git(private, "cat-file", "blob", blob)
-        digest = inspect_bytes(path, content)
+        original_digest = inspect_bytes(path, content)
+        original_rows.append({"path": path, "sha256": original_digest})
+        published = transform_public_source(path, content)
         target = destination / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
-        manifest_rows.append({"path": path, "sha256": digest})
-    verify_approved_rows(manifest_rows, approved)
+        target.write_bytes(published)
+        row = {"path": path, "sha256": hashlib.sha256(published).hexdigest()}
+        if path == PUBLIC_GRADLE_PATH:
+            row["source_sha256"] = original_digest
+            row["transform"] = "PUBLIC_APP_ID_V1"
+        manifest_rows.append(row)
+    verify_approved_rows(original_rows, approved)
     exported = {row["path"] for row in manifest_rows}
     if not REQUIRED_SOURCE_FILES.issubset(exported):
         raise PublicationHold("PRIVATE_REQUIRED_SOURCE_MISSING_HOLD")

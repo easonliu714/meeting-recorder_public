@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_public_snapshot import (  # noqa: E402
     EXPECTED_FONT_ASSETS, PublicationHold, inspect_bytes, tracked_entries,
-    read_approved_scope, verify_approved_rows,
+    read_approved_scope, verify_approved_rows, transform_public_source,
 )
 from verify_public_snapshot import (  # noqa: E402
     OWNER_APPROVED_ICON_GIT_BLOBS, _allowed_source,
@@ -17,6 +17,36 @@ from verify_public_snapshot import (  # noqa: E402
 
 
 class LocalPublicSnapshotExportTests(unittest.TestCase):
+
+    def test_exact_gradle_transform_preserves_namespace_and_min_sdk(self):
+        original = (
+            'namespace = "com.example.myapp"\n'
+            'applicationId = "com.example.meeting_recorder" // existing\n'
+            'minSdk = 21\n'
+        ).encode()
+        output = transform_public_source("android/app/build.gradle.kts", original)
+        self.assertIn(b'applicationId = "com.example.meeting_recorder.public"', output)
+        self.assertIn(b'namespace = "com.example.myapp"', output)
+        self.assertIn(b'minSdk = 21', output)
+        self.assertNotEqual(hashlib.sha256(output).digest(), hashlib.sha256(original).digest())
+        self.assertEqual(transform_public_source("lib/main.dart", original), original)
+
+    def test_gradle_transform_rejects_missing_duplicate_suffix_and_legacy(self):
+        cases = (
+            b'// applicationId = "com.example.meeting_recorder"\n',
+            b'applicationId = "com.example.meeting_recorder.public"\n',
+            b'applicationId = "com.example.meeting_recorder"\n'
+            b'applicationId = "com.example.meeting_recorder"\n',
+            b'applicationId = "com.example.meeting_recorder"\n'
+            b'applicationIdSuffix = ".debug"\n',
+            b'applicationId = "com.example.meeting_recorder"\n'
+            b'// old com.example.meeting_recorder\n',
+        )
+        for original in cases:
+            with self.subTest(case=original[:40]):
+                with self.assertRaisesRegex(PublicationHold, "PUBLIC_GRADLE_"):
+                    transform_public_source("android/app/build.gradle.kts", original)
+
 
     def test_exact_owner_icon_allowlist_only_not_arbitrary_png(self):
         self.assertEqual(len(OWNER_APPROVED_ICON_GIT_BLOBS), 11)

@@ -39,11 +39,13 @@ class PublicationBoundaryTests(unittest.TestCase):
                 target.write_bytes((Path(__file__).resolve().parents[2] / path).read_bytes())
             else:
                 target.write_bytes(("fixture: " + path).encode())
-        rows = [
-            {"path": path, "sha256": hashlib.sha256(
+        rows = []
+        for path in paths:
+            row = {"path": path, "sha256": hashlib.sha256(
                 (self.root / path).read_bytes()).hexdigest()}
-            for path in paths
-        ]
+            if path == "android/app/build.gradle.kts":
+                row.update({"source_sha256": "b" * 64, "transform": "PUBLIC_APP_ID_V1"})
+            rows.append(row)
         manifest = {
             "schema": 1, "private_source_head": "a" * 40, "files": rows
         }
@@ -61,6 +63,36 @@ class PublicationBoundaryTests(unittest.TestCase):
             if row["path"] == "android/app/build.gradle.kts":
                 row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         manifest.write_text(json.dumps(doc), encoding="utf-8")
+
+    def test_gradle_manifest_requires_reviewed_private_input_provenance(self):
+        self.make_source()
+        manifest = self.root / "ci/public_snapshot_manifest.json"
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+        row = next(x for x in doc["files"] if x["path"] == "android/app/build.gradle.kts")
+        original = dict(row)
+        for change in ({"source_sha256": None}, {"source_sha256": "z" * 64},
+                       {"source_sha256": row["sha256"]}, {"transform": "UNREVIEWED"}):
+            row.update(change)
+            manifest.write_text(json.dumps(doc), encoding="utf-8")
+            with self.assertRaisesRegex(PublicationHold, "PROVENANCE"):
+                audit(self.root)
+            row.clear()
+            row.update(original)
+        row.pop("source_sha256")
+        row.pop("transform")
+        manifest.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaisesRegex(PublicationHold, "ATTESTATION"):
+            audit(self.root)
+
+    def test_unrelated_source_cannot_claim_android_identity_transform(self):
+        self.make_source()
+        manifest = self.root / "ci/public_snapshot_manifest.json"
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+        row = next(x for x in doc["files"] if x["path"] == "lib/main.dart")
+        row.update({"source_sha256": "b" * 64, "transform": "PUBLIC_APP_ID_V1"})
+        manifest.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaisesRegex(PublicationHold, "PROVENANCE"):
+            audit(self.root)
 
     def test_private_application_id_rejected_even_with_matching_sha(self):
         self.make_source()

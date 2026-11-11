@@ -140,6 +140,7 @@ def _allowed_source(path: str) -> bool:
 
 
 PUBLIC_APP_ID = "com.example.meeting_recorder.public"
+PUBLIC_GRADLE_PATH = "android/app/build.gradle.kts"
 
 
 def verify_public_android_identity(root: Path) -> None:
@@ -201,9 +202,23 @@ def audit(root: Path) -> str:
     allowed: set[str] = set()
     previous = ""
     for item in rows:
-        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+        if not isinstance(item, dict):
+            raise PublicationHold("INVALID_MANIFEST_ENTRY")
+        fields = set(item)
+        transformed = fields == {"path", "sha256", "source_sha256", "transform"}
+        if fields != {"path", "sha256"} and not transformed:
             raise PublicationHold("INVALID_MANIFEST_ENTRY")
         path, expected = item["path"], item["sha256"]
+        # The reviewed Private input and transformed Public bytes are distinct.
+        if path == PUBLIC_GRADLE_PATH and not transformed:
+            raise PublicationHold("PUBLIC_GRADLE_TRANSFORM_ATTESTATION_HOLD")
+        if transformed and (
+            path != PUBLIC_GRADLE_PATH or item["transform"] != "PUBLIC_APP_ID_V1"
+            or not isinstance(item["source_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", item["source_sha256"])
+            or item["source_sha256"] == expected
+        ):
+            raise PublicationHold("PUBLIC_GRADLE_TRANSFORM_PROVENANCE_HOLD")
         if not isinstance(path, str) or not isinstance(expected, str):
             raise PublicationHold("INVALID_MANIFEST_TYPES")
         if path <= previous or not _allowed_source(path):
