@@ -30,7 +30,12 @@ class PublicationBoundaryTests(unittest.TestCase):
             # Font integrity is a separate non-negotiable prerequisite.
             # The successful manifest fixture must contain the real pinned
             # Owner binaries; negative tests still mutate only their target.
-            if path in ORIGINAL_FONT_ASSETS:
+            if path == "android/app/build.gradle.kts":
+                target.write_text(
+                    'android { defaultConfig {\n  applicationId = "com.example.meeting_recorder.public"\n} }\n',
+                    encoding="utf-8",
+                )
+            elif path in ORIGINAL_FONT_ASSETS:
                 target.write_bytes((Path(__file__).resolve().parents[2] / path).read_bytes())
             else:
                 target.write_bytes(("fixture: " + path).encode())
@@ -45,6 +50,55 @@ class PublicationBoundaryTests(unittest.TestCase):
         (self.root / "ci/public_snapshot_manifest.json").write_text(
             json.dumps(manifest), encoding="utf-8"
         )
+
+
+    def rewrite_gradle_and_manifest(self, new_text):
+        path = self.root / "android/app/build.gradle.kts"
+        path.write_text(new_text, encoding="utf-8")
+        manifest = self.root / "ci/public_snapshot_manifest.json"
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+        for row in doc["files"]:
+            if row["path"] == "android/app/build.gradle.kts":
+                row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest.write_text(json.dumps(doc), encoding="utf-8")
+
+    def test_private_application_id_rejected_even_with_matching_sha(self):
+        self.make_source()
+        self.rewrite_gradle_and_manifest(
+            'applicationId = "com.example.meeting_recorder"\n')
+        with self.assertRaisesRegex(PublicationHold, "PUBLIC_APP_ID_INDEPENDENCE_HOLD"):
+            audit(self.root)
+
+    def test_missing_or_comment_spoofed_public_id_rejected(self):
+        self.make_source()
+        self.rewrite_gradle_and_manifest(
+            '// applicationId = "com.example.meeting_recorder.public"\n')
+        with self.assertRaisesRegex(PublicationHold, "PUBLIC_APP_ID_INDEPENDENCE_HOLD"):
+            audit(self.root)
+
+    def test_duplicate_application_id_rejected_even_with_matching_sha(self):
+        self.make_source()
+        self.rewrite_gradle_and_manifest(
+            'applicationId = "com.example.meeting_recorder.public"\n'
+            'applicationId = "com.example.meeting_recorder.public"\n')
+        with self.assertRaisesRegex(PublicationHold, "PUBLIC_APP_ID_INDEPENDENCE_HOLD"):
+            audit(self.root)
+
+    def test_application_id_suffix_rejected(self):
+        self.make_source()
+        self.rewrite_gradle_and_manifest(
+            'applicationId = "com.example.meeting_recorder.public"\n'
+            'applicationIdSuffix = ".debug"\n')
+        with self.assertRaisesRegex(PublicationHold, "PUBLIC_APP_ID_INDEPENDENCE_HOLD"):
+            audit(self.root)
+
+    def test_legacy_id_hidden_in_gradle_rejected(self):
+        self.make_source()
+        self.rewrite_gradle_and_manifest(
+            'applicationId = "com.example.meeting_recorder.public"\n'
+            '// stale identity com.example.meeting_recorder\n')
+        with self.assertRaisesRegex(PublicationHold, "PUBLIC_APP_ID_INDEPENDENCE_HOLD"):
+            audit(self.root)
 
     def test_empty_bootstrap_is_not_application_pass(self):
         self.assertEqual(audit(self.root), "BOOTSTRAP_ONLY")
