@@ -117,11 +117,11 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
 
         class FakeGit:
             def __call__(self, *_args):
-                return b"\\0".join([
-                    b"100644 blob " + b"a" * 40 + b"\\tlib/main.dart",
-                    b"100644 blob " + b"b" * 40 + b"\\ttest/main_test.dart",
-                    b"100644 blob " + b"c" * 40 + b"\\ttool/patch_old_private.py",
-                ]) + b"\\0"
+                return b"\0".join([
+                    b"100644 blob " + b"a" * 40 + b"\tlib/main.dart",
+                    b"100644 blob " + b"b" * 40 + b"\ttest/main_test.dart",
+                    b"100644 blob " + b"c" * 40 + b"\ttool/patch_old_private.py",
+                ]) + b"\0"
 
         with patch("prepare_public_snapshot.git", new=FakeGit()):
             rows = tracked_entries(Path("/none"), "a" * 40,
