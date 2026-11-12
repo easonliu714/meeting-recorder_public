@@ -129,6 +129,13 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
             mutated["files"][0]["safe_copy_sha256"] = "e" * 64
             check(mutated, "UNATTESTED_COPY")
             mutated = json.loads(json.dumps(doc))
+            mutated["files"][0]["path"] = "android/app/build.gradle.kts"
+            check(mutated, "GRADLE_SANITIZATION_BYPASS")
+            mutated = json.loads(json.dumps(doc))
+            mutated["files"][0]["decision"] = "DENY"
+            check(mutated, "DENIED_SOURCE_APPROVAL")
+
+            mutated = json.loads(json.dumps(doc))
             mutated["files"].append(dict(mutated["files"][0]))
             check(mutated, "ROW_INTEGRITY")
             mutated = json.loads(json.dumps(doc))

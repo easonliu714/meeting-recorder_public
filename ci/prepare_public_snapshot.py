@@ -188,6 +188,12 @@ def read_candidate_allowlist(path: Path, head: str) -> dict[str, str]:
         candidate_count += 1
         counts[status] += 1
         if status == "PASS_AS_IS":
+            # Gradle's original Private ID cannot be exported as-is, even
+            # when a forged/edited confidential report claims it is safe.
+            if name == PUBLIC_GRADLE_PATH:
+                raise PublicationHold("PRIVATE_GRADLE_SANITIZATION_BYPASS_HOLD")
+            if row.get("decision") == "DENY":
+                raise PublicationHold("PRIVATE_DENIED_SOURCE_APPROVAL_HOLD")
             if row.get("safe_copy_sha256") is not None:
                 raise PublicationHold("PRIVATE_CANDIDATE_UNATTESTED_COPY_HOLD")
             approved[name] = digest

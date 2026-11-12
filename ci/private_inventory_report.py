@@ -45,6 +45,10 @@ def classify_candidate_audit(path: str, blob: str, data: bytes,
     """Fail closed on unresolved rights/dataflow; never alter Private bytes."""
     if not _allowed_source(path):
         return None, "EXCLUDED_FROM_PUBLIC_APP_SCOPE"
+    # Never downgrade a real secret/PII finding to a routine App-ID rewrite.
+    # The Private original is immutable; sanitization must be separately reviewed.
+    if decision == "DENY":
+        return "HOLD_REVIEW", reason
     if path == PUBLIC_GRADLE_PATH:
         return "NEEDS_SANITIZATION", "PUBLIC_APP_ID_TRANSFORM_AND_PARITY_REQUIRED"
     if path in OWNER_APPROVED_ICON_GIT_BLOBS:
@@ -57,8 +61,6 @@ def classify_candidate_audit(path: str, blob: str, data: bytes,
         if len(data) == size and digest == expected:
             return "PASS_AS_IS", "PINNED_OFL_FONT_ASSET"
         return "HOLD_REVIEW", "THIRD_PARTY_FONT_OR_LICENSE_MISMATCH"
-    if decision == "DENY":
-        return "HOLD_REVIEW", reason
     if decision != "HOLD":
         return "HOLD_REVIEW", "UNEXPECTED_INVENTORY_DECISION"
     if path in {"pubspec.yaml", "pubspec.lock"}:

@@ -96,6 +96,24 @@ class ConfidentialInventoryTests(unittest.TestCase):
         )
         self.assertNotIn("ghp_", json.dumps(report))
 
+    def test_real_secret_in_gradle_is_hold_not_ordinary_id_sanitization(self):
+        # Negative: a leaked credential in the Gradle source must not be
+        # classified as a routine app-ID rewrite; Private bytes remain intact.
+        secret = b"gsk_" + b"x" * 40
+        self.write("android/app/build.gradle.kts",
+                   b'android { defaultConfig { applicationId = "com.example.meeting_recorder" } }\n'
+                   + b"// credential " + secret + b"\n")
+        self.head = self.commit()
+        report = inventory_private_head(self.private, self.head)
+        row = next(x for x in report["files"]
+                   if x["path"] == "android/app/build.gradle.kts")
+        self.assertEqual(row["decision"], "DENY")
+        self.assertEqual(row["audit_status"], "HOLD_REVIEW")
+        self.assertIsNone(row["safe_copy_sha256"])
+        self.assertNotIn(secret.decode(), json.dumps(report))
+        self.assertEqual(sum(report["candidate_audit"]["states"].values()),
+                         report["candidate_audit"]["candidate"])
+
     def test_modified_candidate_blob_and_unreviewed_binary_fail_closed(self):
         self.write("lib/safe.dart", b"const key = 'gsk_" + b"x" * 40 + b"';")
         self.write("android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png",
