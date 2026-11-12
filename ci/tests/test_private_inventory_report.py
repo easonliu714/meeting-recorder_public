@@ -109,6 +109,9 @@ class ConfidentialInventoryTests(unittest.TestCase):
                    b"final header = 'Authorization: Bearer runtime';\n")
         self.write("lib/preferences.dart",
                    b"final prefs = SharedPreferences.getInstance();\n")
+        self.write("android/app/src/main/AndroidManifest.xml",
+                   b"<manifest><![CDATA[\n// Authorization: Bearer runtime\n"
+                   b"]]></manifest>\n")
         self.write("lib/multiline.dart",
                    b"const embedded = '''\n// Authorization: Bearer runtime\n''';\n")
         secret = b"gsk_" + b"x" * 40
@@ -120,7 +123,8 @@ class ConfidentialInventoryTests(unittest.TestCase):
                          "PASS_AS_IS")
         self.assertEqual(rows["lib/documentation.dart"]["decision"], "HOLD")
         for name in ("lib/executable.dart", "lib/preferences.dart",
-                     "lib/multiline.dart", "lib/secret_comment.dart"):
+                     "lib/multiline.dart", "lib/secret_comment.dart",
+                     "android/app/src/main/AndroidManifest.xml"):
             self.assertEqual(rows[name]["audit_status"], "HOLD_REVIEW", name)
         self.assertEqual(rows["lib/secret_comment.dart"]["decision"], "DENY")
         self.assertNotIn(secret.decode(), json.dumps(report))
