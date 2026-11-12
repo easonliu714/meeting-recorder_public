@@ -230,6 +230,48 @@ class ConfidentialInventoryTests(unittest.TestCase):
                 save_confidential_report(report, target, self.private, self.public)
 
 
+
+    def test_confidential_report_never_enters_unrelated_git_repositories(self):
+        # Positive: a genuinely non-Git owner-local directory remains writable,
+        # even when an inherited GIT_DIR tries to redirect the probe.
+        report = inventory_private_head(self.private, self.head)
+        clean = self.base / "clean-report.json"
+        with patch.dict(os.environ, {
+            "GIT_DIR": str(self.private / ".git"),
+            "GIT_WORK_TREE": str(self.private),
+        }):
+            save_confidential_report(report, clean, self.private, self.public)
+        self.assertTrue(clean.is_file())
+
+        # Negative: a foreign worktree, nested directory, and bare repository
+        # are all unsafe, even though none is inside the known two checkouts.
+        foreign = self.base / "foreign"
+        bare = self.base / "bare.git"
+        self.git("init", "-q", str(foreign))
+        self.git("init", "--bare", "-q", str(bare))
+        nested = foreign / "nested" / "reports"
+        nested.mkdir(parents=True)
+        for parent in (foreign, nested, bare):
+            target = parent / "confidential.json"
+            with self.subTest(parent=parent):
+                with self.assertRaisesRegex(PublicationHold, "GIT_REPOSITORY_HOLD"):
+                    save_confidential_report(
+                        report, target, self.private, self.public)
+                self.assertFalse(target.exists())
+
+        # Negative: Git failure other than the exact non-repository condition
+        # is ambiguous and must not be treated as permission to write.
+        ambiguous = subprocess.CompletedProcess(
+            args=["git"], returncode=1, stdout=b"",
+            stderr=b"fatal: detected dubious ownership")
+        target = self.base / "ambiguous.json"
+        with patch("private_inventory_report.subprocess.run",
+                   return_value=ambiguous):
+            with self.assertRaisesRegex(PublicationHold, "GIT_PROBE_HOLD"):
+                save_confidential_report(
+                    report, target, self.private, self.public)
+        self.assertFalse(target.exists())
+
     def test_new_private_exporter_preflight_and_tests_are_excluded(self):
         # Positive: real application Source remains a candidate. Negative:
         # the trusted Private-runner-only preflight is never published.

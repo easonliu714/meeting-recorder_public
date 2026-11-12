@@ -12,10 +12,12 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import subprocess
 
 from audit_private_git_head import (
     FORBIDDEN_TRACKED_NAMES, FORBIDDEN_TRACKED_SUFFIXES, HEX40,
     KNOWN_PRIVATE_BINARY, PublicationHold, inspect_text, private_git,
+    sanitized_git_env,
 )
 from verify_public_snapshot import (
     OWNER_APPROVED_ICON_GIT_BLOBS, ORIGINAL_FONT_ASSETS,
@@ -168,6 +170,32 @@ def inventory_private_head(private: Path, head: str) -> dict:
             "files": rows}
 
 
+
+def reject_git_confidential_report_parent(parent: Path) -> None:
+    """Never save a confidential full-tree report in ANY Git checkout.
+
+    Excluding only the known Private/Public roots misses unrelated repositories,
+    nested worktrees and bare Git directories. An ambiguous Git probe must HOLD.
+    """
+    env = sanitized_git_env()
+    env["LC_ALL"] = "C"
+    try:
+        probe = subprocess.run(
+            ["git", "-C", str(parent), "rev-parse",
+             "--is-inside-work-tree", "--is-inside-git-dir",
+             "--is-bare-repository"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False, env=env,
+        )
+    except OSError as exc:
+        raise PublicationHold("INVENTORY_REPORT_GIT_PROBE_HOLD") from exc
+    if probe.returncode == 0:
+        raise PublicationHold("INVENTORY_REPORT_GIT_REPOSITORY_HOLD")
+    if (probe.returncode != 128 or not probe.stderr.strip().lower().startswith(
+            b"fatal: not a git repository")):
+        raise PublicationHold("INVENTORY_REPORT_GIT_PROBE_HOLD")
+
+
 def save_confidential_report(report: dict, destination: Path,
                              private: Path, public: Path) -> None:
     """Create a new owner-local 0600 report, never under either Git checkout."""
@@ -177,6 +205,7 @@ def save_confidential_report(report: dict, destination: Path,
             _inside(target, private.resolve()) or _inside(target, public.resolve()) or
             target.exists() or target.is_symlink()):
         raise PublicationHold("INVENTORY_REPORT_DESTINATION_HOLD")
+    reject_git_confidential_report_parent(parent)
     payload = (json.dumps(report, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     if hasattr(os, "O_NOFOLLOW"):
