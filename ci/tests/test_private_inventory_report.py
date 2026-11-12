@@ -96,6 +96,40 @@ class ConfidentialInventoryTests(unittest.TestCase):
         )
         self.assertNotIn("ghp_", json.dumps(report))
 
+
+    def test_comment_only_dataflow_is_not_secret_but_executable_remains_hold(self):
+        # Positive: documentation names do not create a runtime data leak.
+        # Negative: real executable paths, multiline literals and credentials
+        # remain blocked. The Private tracked originals are never rewritten.
+        self.write("lib/documentation.dart",
+                   b"/// Authorization is not a provider grant.\n"
+                   b"// SharedPreferences apiKey File(path) are documentation.\n"
+                   b"int localValue() => 42;\n")
+        self.write("lib/executable.dart",
+                   b"final header = 'Authorization: Bearer runtime';\n")
+        self.write("lib/preferences.dart",
+                   b"final prefs = SharedPreferences.getInstance();\n")
+        self.write("lib/multiline.dart",
+                   b"const embedded = '''\n// Authorization: Bearer runtime\n''';\n")
+        secret = b"gsk_" + b"x" * 40
+        self.write("lib/secret_comment.dart", b"/// " + secret + b"\n")
+        self.head = self.commit()
+        report = inventory_private_head(self.private, self.head)
+        rows = {row["path"]: row for row in report["files"]}
+        self.assertEqual(rows["lib/documentation.dart"]["audit_status"],
+                         "PASS_AS_IS")
+        self.assertEqual(rows["lib/documentation.dart"]["decision"], "HOLD")
+        for name in ("lib/executable.dart", "lib/preferences.dart",
+                     "lib/multiline.dart", "lib/secret_comment.dart"):
+            self.assertEqual(rows[name]["audit_status"], "HOLD_REVIEW", name)
+        self.assertEqual(rows["lib/secret_comment.dart"]["decision"], "DENY")
+        self.assertNotIn(secret.decode(), json.dumps(report))
+        counts = report["candidate_audit"]
+        self.assertEqual(counts["candidate"], sum(counts["states"].values()))
+        self.assertEqual(counts["tracked"],
+                         counts["candidate"] + counts["excluded"])
+
+
     def test_real_secret_in_gradle_is_hold_not_ordinary_id_sanitization(self):
         # Negative: a leaked credential in the Gradle source must not be
         # classified as a routine app-ID rewrite; Private bytes remain intact.

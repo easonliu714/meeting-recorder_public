@@ -41,6 +41,22 @@ DATAFLOW_REVIEW = re.compile(
 )
 
 
+def executable_dataflow_view(data: bytes) -> bytes:
+    """Ignore standalone // documentation, not executable dataflow.
+
+    Dart/Kotlin multiline literals can contain lines beginning with //.
+    Preserve the entire input when triple quotes are present; all other
+    inline/block comments remain conservatively reviewable. Secret/PII
+    scanning still inspects the original unfiltered bytes.
+    """
+    if b'"""' in data or b"'''" in data:
+        return data
+    return b"".join(
+        b"" if line.lstrip().startswith(b"//") else line
+        for line in data.splitlines(keepends=True)
+    )
+
+
 def classify_candidate_audit(path: str, blob: str, data: bytes,
                              decision: str, reason: str,
                              digest: str) -> tuple[str | None, str]:
@@ -71,7 +87,7 @@ def classify_candidate_audit(path: str, blob: str, data: bytes,
         return "HOLD_REVIEW", "GENERATED_SOURCE_PRIVACY_AND_PARITY_REVIEW"
     if path.endswith((".png", ".ttf")) or b"\0" in data:
         return "HOLD_REVIEW", "BINARY_CONTENT_REVIEW"
-    if DATAFLOW_REVIEW.search(data):
+    if DATAFLOW_REVIEW.search(executable_dataflow_view(data)):
         return "HOLD_REVIEW", "RUNTIME_DATAFLOW_REVIEW"
     return "PASS_AS_IS", "BATCH_OWNER_RIGHTS_AND_STATIC_SCAN_PASS"
 
