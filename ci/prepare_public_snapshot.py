@@ -109,7 +109,10 @@ def inspect_bytes(path: str, data: bytes) -> str:
 
 
 def read_approved_scope(path: Path, head: str) -> dict[str, str]:
-    """Local per-file human rights/privacy sign-off; never a public artifact.
+    """Legacy schema1 reader retained only for regression compatibility.
+
+    The live exporter uses read_candidate_allowlist (schema2), not per-file
+    human rights sign-off. Owner batch rights supersede this legacy format.
 
     A regex-only PASS, icon approval, or a matching SHA does not authorize
     unrelated application code. This review input must be held privately.
@@ -135,6 +138,69 @@ def read_approved_scope(path: Path, head: str) -> dict[str, str]:
                 row["privacy"] != "REVIEW_PASS"):
             raise PublicationHold("PRIVATE_SCOPE_UNAPPROVED_OR_DUPLICATE_HOLD")
         approved[name] = digest
+    return approved
+
+
+
+def read_candidate_allowlist(path: Path, head: str) -> dict[str, str]:
+    """Derive allowlist from confidential full-tree SHA256 audit, not per-file rights.
+
+    Batch Owner approval never waives real secret/PII/third-party and source
+    parity checks. Sanitized copies require separate attestation before export.
+    """
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise PublicationHold("PRIVATE_CANDIDATE_AUDIT_MISSING_HOLD") from exc
+    if (not isinstance(doc, dict) or doc.get("schema") != 2 or
+            doc.get("private_source_head") != head or
+            not isinstance(doc.get("files"), list) or
+            not isinstance(doc.get("candidate_audit"), dict)):
+        raise PublicationHold("PRIVATE_CANDIDATE_HEAD_OR_SCHEMA_HOLD")
+    rows = doc["files"]
+    summary = doc["candidate_audit"]
+    states = ("NOT_SCANNED", "PASS_AS_IS", "NEEDS_SANITIZATION",
+              "PASS_SANITIZED", "HOLD_REVIEW")
+    counts = {state: 0 for state in states}
+    approved: dict[str, str] = {}
+    candidate_count = 0
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise PublicationHold("PRIVATE_CANDIDATE_ROW_SCHEMA_HOLD")
+        name = row.get("path")
+        digest = row.get("source_sha256")
+        status = row.get("audit_status")
+        candidate = row.get("candidate")
+        if (not isinstance(name, str) or name in seen or
+                not isinstance(digest, str) or
+                not re.fullmatch(r"[0-9a-f]{64}", digest) or
+                row.get("sha256") != digest or
+                type(candidate) is not bool):
+            raise PublicationHold("PRIVATE_CANDIDATE_ROW_INTEGRITY_HOLD")
+        seen.add(name)
+        if not candidate:
+            if status is not None or _allowed_source(name):
+                raise PublicationHold("PRIVATE_CANDIDATE_EXCLUSION_HOLD")
+            continue
+        if not _allowed_source(name) or status not in counts:
+            raise PublicationHold("PRIVATE_CANDIDATE_STATUS_HOLD")
+        candidate_count += 1
+        counts[status] += 1
+        if status == "PASS_AS_IS":
+            if row.get("safe_copy_sha256") is not None:
+                raise PublicationHold("PRIVATE_CANDIDATE_UNATTESTED_COPY_HOLD")
+            approved[name] = digest
+        elif status == "PASS_SANITIZED":
+            raise PublicationHold("PRIVATE_SANITIZED_COPY_PARITY_NOT_READY_HOLD")
+    if (not rows or not approved or
+            summary.get("tracked") != len(rows) or
+            summary.get("candidate") != candidate_count or
+            summary.get("excluded") != len(rows) - candidate_count or
+            summary.get("states") != counts or
+            summary.get("copyable") != len(approved) or
+            summary.get("actually_copied") != 0):
+        raise PublicationHold("PRIVATE_CANDIDATE_CONSERVATION_HOLD")
     return approved
 
 
@@ -260,7 +326,7 @@ def prepare(private: Path, public: Path, head: str, approval_manifest: Path,
     # catches sensitive material even under excluded docs/CI files and refuses
     # the original Private signing-properties .gitignore vulnerability.
     inspect_private_head(private, head)
-    approved = read_approved_scope(approval_manifest, head)
+    approved = read_candidate_allowlist(approval_manifest, head)
     with tempfile.TemporaryDirectory(prefix="mr-public-export-") as temp:
         staged = Path(temp)
         manifest = create_staging(private, public, head, staged, approved)
@@ -305,7 +371,7 @@ def main() -> int:
     parser.add_argument("--public-root", required=True, type=Path)
     parser.add_argument("--private-head", required=True)
     parser.add_argument("--approval-manifest", required=True, type=Path,
-                        help="Private local per-file Owner rights and privacy review; never commit")
+                        help="Confidential exact-head schema2 candidate audit; never commit")
     parser.add_argument("--apply", action="store_true", help="Copy only after full dry-run audit; NEVER push")
     args = parser.parse_args()
     try:

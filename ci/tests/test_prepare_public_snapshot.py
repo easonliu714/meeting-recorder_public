@@ -12,7 +12,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_public_snapshot import (  # noqa: E402
     EXPECTED_FONT_ASSETS, PublicationHold, inspect_bytes, tracked_entries,
-    read_approved_scope, verify_approved_rows, transform_public_source, git,
+    read_approved_scope, read_candidate_allowlist, verify_approved_rows,
+    transform_public_source, git,
     verify_public_checkout_clean, require_trusted_repo_origin,
 )
 from verify_public_snapshot import (  # noqa: E402
@@ -91,6 +92,49 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
         for path in ("assets/owner_photo.png", "web/icons/Icon-192.png",
                      "android/app/src/main/res/mipmap-mdpi/private.png"):
             self.assertFalse(_allowed_source(path))
+
+    def test_batch_owner_candidate_allowlist_without_per_file_rights(self):
+        row = {"path": "lib/safe.dart", "sha256": "a" * 64,
+               "source_sha256": "a" * 64, "safe_copy_sha256": None,
+               "candidate": True, "audit_status": "PASS_AS_IS"}
+        excluded = {"path": "docs/private.md", "sha256": "b" * 64,
+                    "source_sha256": "b" * 64, "safe_copy_sha256": None,
+                    "candidate": False, "audit_status": None}
+        counts = {"NOT_SCANNED": 0, "PASS_AS_IS": 1,
+                  "NEEDS_SANITIZATION": 0, "PASS_SANITIZED": 0,
+                  "HOLD_REVIEW": 0}
+        doc = {"schema": 2, "private_source_head": "c" * 40,
+               "candidate_audit": {"tracked": 2, "candidate": 1,
+                                   "excluded": 1, "states": counts,
+                                   "copyable": 1, "actually_copied": 0},
+               "files": [row, excluded]}
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "private-audit.json"
+            def check(value, match):
+                p.write_text(json.dumps(value), encoding="utf-8")
+                with self.assertRaisesRegex(PublicationHold, match):
+                    read_candidate_allowlist(p, "c" * 40)
+            p.write_text(json.dumps(doc), encoding="utf-8")
+            self.assertEqual(read_candidate_allowlist(p, "c" * 40),
+                             {"lib/safe.dart": "a" * 64})
+            with self.assertRaisesRegex(PublicationHold, "HEAD_OR_SCHEMA"):
+                read_candidate_allowlist(p, "d" * 40)
+            mutated = json.loads(json.dumps(doc))
+            mutated["files"][0]["audit_status"] = "HOLD_REVIEW"
+            check(mutated, "CONSERVATION")
+            mutated = json.loads(json.dumps(doc))
+            mutated["files"][0]["audit_status"] = "PASS_SANITIZED"
+            check(mutated, "SANITIZED_COPY_PARITY")
+            mutated = json.loads(json.dumps(doc))
+            mutated["files"][0]["safe_copy_sha256"] = "e" * 64
+            check(mutated, "UNATTESTED_COPY")
+            mutated = json.loads(json.dumps(doc))
+            mutated["files"].append(dict(mutated["files"][0]))
+            check(mutated, "ROW_INTEGRITY")
+            mutated = json.loads(json.dumps(doc))
+            mutated["files"][1]["candidate"] = True
+            mutated["files"][1]["audit_status"] = "PASS_AS_IS"
+            check(mutated, "STATUS")
 
     def test_private_scope_approval_exact_head_rights_and_privacy(self):
         with tempfile.TemporaryDirectory() as tmp:
