@@ -101,14 +101,14 @@ class ConfidentialInventoryTests(unittest.TestCase):
         # Positive: real executable dataflow is located by line and category,
         # while standalone comments are ignored without shifting line numbers.
         self.write("lib/evidence.dart",
-                   b"// Authorization SharedPreferences apiKey documentation\\n"
-                   b"final prefs = SharedPreferences.getInstance();\\n"
-                   b"final h = 'Authorization: Bearer runtime';\\n")
+                   b"// Authorization SharedPreferences apiKey documentation\n"
+                   b"final prefs = SharedPreferences.getInstance();\n"
+                   b"final h = 'Authorization: Bearer runtime';\n")
         self.write("lib/multiline_evidence.dart",
-                   b"const embedded = '''\\n// Authorization\\n''';\\n")
+                   b"const embedded = '''\n// Authorization\n''';\n")
         secret = b"gsk_" + b"x" * 40
         self.write("lib/secret_evidence.dart",
-                   b"const leaked = '" + secret + b"';\\n")
+                   b"const leaked = '" + secret + b"';\n")
         self.head = self.commit()
         report = inventory_private_head(self.private, self.head)
         rows = {row["path"]: row for row in report["files"]}
@@ -129,9 +129,9 @@ class ConfidentialInventoryTests(unittest.TestCase):
         from private_inventory_report import dataflow_review_evidence
         self.assertEqual(
             dataflow_review_evidence("lib/io.dart",
-                                     b"// File(path) image.path\\n"
-                                     b"final f = File(path);\\n"
-                                     b"final p = image.path;\\n"),
+                                     b"// File(path) image.path\n"
+                                     b"final f = File(path);\n"
+                                     b"final p = image.path;\n"),
             [{"kind": "MEDIA_PATH", "lines": [3], "truncated": False},
              {"kind": "FILE_IO", "lines": [2], "truncated": False}],
         )
