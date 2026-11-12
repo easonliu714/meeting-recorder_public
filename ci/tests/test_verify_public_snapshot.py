@@ -132,6 +132,35 @@ class PublicationBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(PublicationHold, "PUBLIC_APP_ID_INDEPENDENCE_HOLD"):
             audit(self.root)
 
+    def test_block_comment_and_raw_string_spoof_public_id_rejected(self):
+        cases = (
+            '/*\n applicationId = "com.example.meeting_recorder.public"\n*/\n',
+            '/* outer /* nested */\n applicationId = "com.example.meeting_recorder.public"\n*/\n',
+            'val decoy = """\n applicationId = "com.example.meeting_recorder.public"\n"""\n',
+        )
+        for source in cases:
+            with self.subTest(source=source[:30]):
+                self.make_source()
+                self.rewrite_gradle_and_manifest(source)
+                with self.assertRaisesRegex(PublicationHold, "PUBLIC_APP_ID_INDEPENDENCE_HOLD"):
+                    audit(self.root)
+
+    def test_active_public_id_with_unrelated_nested_comments_passes(self):
+        self.make_source()
+        self.rewrite_gradle_and_manifest(
+            '/* harmless /* nested */ comment */\n'
+            'val url = "https://example.invalid/path"\n'
+            'applicationId = "com.example.meeting_recorder.public" // actual\n'
+        )
+        self.assertEqual(audit(self.root), "SOURCE_INTEGRITY_READY")
+
+    def test_unterminated_gradle_comment_fails_closed(self):
+        self.make_source()
+        self.rewrite_gradle_and_manifest(
+            '/*\n applicationId = "com.example.meeting_recorder.public"\n')
+        with self.assertRaisesRegex(PublicationHold, "GRADLE_UNTERMINATED"):
+            audit(self.root)
+
     def test_empty_bootstrap_is_not_application_pass(self):
         self.assertEqual(audit(self.root), "BOOTSTRAP_ONLY")
 

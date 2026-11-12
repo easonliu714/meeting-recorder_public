@@ -52,6 +52,35 @@ class LocalPublicSnapshotExportTests(unittest.TestCase):
                     transform_public_source("android/app/build.gradle.kts", original)
 
 
+    def test_gradle_transform_rejects_commented_and_raw_string_ids(self):
+        cases = (
+            b'/*\n applicationId = "com.example.meeting_recorder"\n*/\n',
+            b'/* outer /* nested */\n applicationId = "com.example.meeting_recorder"\n*/\n',
+            b'val decoy = """\n applicationId = "com.example.meeting_recorder"\n"""\n',
+        )
+        for original in cases:
+            with self.subTest(original=original[:35]):
+                with self.assertRaisesRegex(PublicationHold, "PUBLIC_GRADLE_TRANSFORM_SCOPE_HOLD"):
+                    transform_public_source("android/app/build.gradle.kts", original)
+
+    def test_gradle_transform_preserves_unrelated_comments_and_urls(self):
+        original = (
+            b'/* harmless /* nested */ comment */\n'
+            b'val url = "https://example.invalid/path"\n'
+            b'applicationId = "com.example.meeting_recorder" // actual\n'
+        )
+        self.assertEqual(
+            transform_public_source("android/app/build.gradle.kts", original),
+            original.replace(
+                b'applicationId = "com.example.meeting_recorder"',
+                b'applicationId = "com.example.meeting_recorder.public"'))
+
+    def test_gradle_transform_rejects_unterminated_comment(self):
+        with self.assertRaisesRegex(PublicationHold, "GRADLE_UNTERMINATED"):
+            transform_public_source(
+                "android/app/build.gradle.kts",
+                b'/*\n applicationId = "com.example.meeting_recorder"\n')
+
     def test_exact_owner_icon_allowlist_only_not_arbitrary_png(self):
         self.assertEqual(len(OWNER_APPROVED_ICON_GIT_BLOBS), 11)
         for path in OWNER_APPROVED_ICON_GIT_BLOBS:

@@ -21,6 +21,7 @@ from verify_public_snapshot import (
     BINARY_WHITELIST, BOOTSTRAP_FILES, MANIFEST, REQUIRED_SOURCE_FILES,
     OWNER_APPROVED_ICON_GIT_BLOBS, PUBLIC_APP_ID, PUBLIC_GRADLE_PATH,
     SENSITIVE_PATTERNS, PublicationHold, _allowed_source, audit,
+    mask_gradle_comments,
 )
 
 # These are the Owner-supplied original files, not a regenerated font.
@@ -154,18 +155,18 @@ def transform_public_source(path: str, original: bytes) -> bytes:
         text = original.decode("utf-8")
     except UnicodeError as exc:
         raise PublicationHold("PUBLIC_GRADLE_NON_UTF8_HOLD") from exc
-    assignments = re.findall(r"(?m)^[ \t]*applicationId[ \t]*=", text)
+    effective = mask_gradle_comments(text)
+    assignments = re.findall(r"(?m)^[ \t]*applicationId[ \t]*=", effective)
     exact = re.compile(
-        r'(?m)^([ \t]*applicationId[ \t]*=[ \t]*)"com\.example\.meeting_recorder"'
-        r'([ \t]*(?://[^\r\n]*)?)$'
+        r'(?m)^[ \t]*applicationId[ \t]*=[ \t]*"(?P<id>com\.example\.meeting_recorder)"[ \t]*$'
     )
-    if (len(assignments) != 1 or len(exact.findall(text)) != 1 or
-            re.search(r"(?m)^[ \t]*applicationIdSuffix[ \t]*=", text)):
+    matches = list(exact.finditer(effective))
+    if (len(assignments) != 1 or len(matches) != 1 or
+            re.search(r"(?m)^[ \t]*applicationIdSuffix[ \t]*=", effective)):
         raise PublicationHold("PUBLIC_GRADLE_TRANSFORM_SCOPE_HOLD")
-    output = exact.sub(
-        lambda m: m.group(1) + '"' + PUBLIC_APP_ID + '"' + m.group(2),
-        text, count=1,
-    )
+    # Preserve every original Gradle byte except the one reviewed ID value.
+    start, end = matches[0].span("id")
+    output = text[:start] + PUBLIC_APP_ID + text[end:]
     if re.search(r"com\.example\.meeting_recorder(?!\.public)", output):
         raise PublicationHold("PUBLIC_GRADLE_LEGACY_ID_REMAINS_HOLD")
     return output.encode("utf-8")

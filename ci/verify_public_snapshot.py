@@ -145,24 +145,80 @@ PUBLIC_APP_ID = "com.example.meeting_recorder.public"
 PUBLIC_GRADLE_PATH = "android/app/build.gradle.kts"
 
 
-def verify_public_android_identity(root: Path) -> None:
-    """Reject a public snapshot that could install over the Private app.
+def mask_gradle_comments(source: str) -> str:
+    """Mask nested Kotlin comments/raw strings without shifting source offsets."""
+    chars = list(source)
+    size = len(source)
+    i = 0
+    while i < size:
+        if source.startswith("//", i):
+            end = source.find("\n", i)
+            if end < 0:
+                end = size
+            for pos in range(i, end):
+                if chars[pos] not in "\r\n":
+                    chars[pos] = " "
+            i = end
+        elif source.startswith("/*", i):
+            start, depth = i, 1
+            i += 2
+            while depth:
+                if i >= size:
+                    raise PublicationHold("GRADLE_UNTERMINATED_BLOCK_COMMENT_HOLD")
+                if source.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif source.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            for pos in range(start, i):
+                if chars[pos] not in "\r\n":
+                    chars[pos] = " "
+        elif source.startswith('"""', i):
+            end = source.find('"""', i + 3)
+            if end < 0:
+                raise PublicationHold("GRADLE_UNTERMINATED_RAW_STRING_HOLD")
+            for pos in range(i, end + 3):
+                if chars[pos] not in "\r\n":
+                    chars[pos] = " "
+            i = end + 3
+        elif source[i] in ('"', "'"):
+            quote = source[i]
+            i += 1
+            while i < size:
+                if source[i] == "\\":
+                    i += 2
+                elif source[i] == quote:
+                    i += 1
+                    break
+                elif source[i] in "\r\n":
+                    raise PublicationHold("GRADLE_UNTERMINATED_STRING_HOLD")
+                else:
+                    i += 1
+            else:
+                raise PublicationHold("GRADLE_UNTERMINATED_STRING_HOLD")
+        else:
+            i += 1
+    return "".join(chars)
 
-    Validate the Gradle assignment, not a comment or manifest hash alone.
-    The generated Gradle output must be checked again by application CI.
-    """
+
+def verify_public_android_identity(root: Path) -> None:
+    """Require one executable Public app ID, not a commented or quoted decoy."""
     target = root / "android/app/build.gradle.kts"
     try:
         source = target.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise PublicationHold("PUBLIC_APP_ID_BUILD_FILE_HOLD") from exc
-    assignments = re.findall(r'(?m)^[ \t]*applicationId[ \t]*=', source)
+    effective = mask_gradle_comments(source)
+    assignments = re.findall(r'(?m)^[ \t]*applicationId[ \t]*=', effective)
     valid = re.findall(
-        r'(?m)^[ \t]*applicationId[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*(?://[^\r\n]*)?$',
-        source,
+        r'(?m)^[ \t]*applicationId[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*$',
+        effective,
     )
     if (len(assignments) != 1 or valid != [PUBLIC_APP_ID] or
-            re.search(r'(?m)^[ \t]*applicationIdSuffix[ \t]*=', source) or
+            re.search(r'(?m)^[ \t]*applicationIdSuffix[ \t]*=', effective) or
             re.search(r'com\.example\.meeting_recorder(?!\.public)', source)):
         raise PublicationHold("PUBLIC_APP_ID_INDEPENDENCE_HOLD")
 
