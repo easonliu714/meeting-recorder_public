@@ -72,8 +72,8 @@ DATAFLOW_SIGNAL_PATTERNS = (
     ("AUTHORIZATION", re.compile(rb"Authorization", re.I)),
     ("KEY_REFERENCE", re.compile(rb"api[_-]?key|apiKey|access[_-]?token", re.I)),
     ("PROVIDER_RAW", re.compile(rb"ProviderRaw", re.I)),
-    ("MEDIA_PATH", re.compile(rb"image\\.path|recordingPath|content://|file://", re.I)),
-    ("FILE_IO", re.compile(rb"File\\(", re.I)),
+    ("MEDIA_PATH", re.compile(rb"image\.path|recordingPath|content://|file://", re.I)),
+    ("FILE_IO", re.compile(rb"File\(", re.I)),
 )
 
 

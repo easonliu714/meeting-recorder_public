@@ -124,6 +124,17 @@ class ConfidentialInventoryTests(unittest.TestCase):
         self.assertEqual(rows["lib/secret_evidence.dart"]["audit_status"],
                          "HOLD_REVIEW")
         self.assertEqual(rows["lib/secret_evidence.dart"]["review_evidence"], [])
+        # Regex literals must compile and locate actual File()/image.path
+        # references without treating documentation as executable.
+        from private_inventory_report import dataflow_review_evidence
+        self.assertEqual(
+            dataflow_review_evidence("lib/io.dart",
+                                     b"// File(path) image.path\\n"
+                                     b"final f = File(path);\\n"
+                                     b"final p = image.path;\\n"),
+            [{"kind": "MEDIA_PATH", "lines": [3], "truncated": False},
+             {"kind": "FILE_IO", "lines": [2], "truncated": False}],
+        )
         self.assertNotIn(secret.decode(), json.dumps(report))
         self.assertEqual(sum(report["candidate_audit"]["states"].values()),
                          report["candidate_audit"]["candidate"])
