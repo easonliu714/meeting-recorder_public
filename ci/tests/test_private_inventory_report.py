@@ -179,5 +179,30 @@ class ConfidentialInventoryTests(unittest.TestCase):
                 save_confidential_report(report, target, self.private, self.public)
 
 
+    def test_new_private_exporter_preflight_and_tests_are_excluded(self):
+        # Positive: real application Source remains a candidate. Negative:
+        # the trusted Private-runner-only preflight is never published.
+        private_paths = (
+            "tool/private_public_export_preflight.py",
+            "tool/tests/test_private_public_export_preflight.py",
+        )
+        for path in private_paths:
+            self.write(path, b"Private-only CI handoff, never Public App Source\\n")
+        self.write("lib/safe_app.dart", b"int safeApp() => 7;\\n")
+        self.head = self.commit()
+        report = inventory_private_head(self.private, self.head)
+        rows = {row["path"]: row for row in report["files"]}
+        for path in private_paths:
+            self.assertFalse(rows[path]["candidate"])
+            self.assertIsNone(rows[path]["audit_status"])
+            self.assertEqual(rows[path]["audit_reason"],
+                             "EXCLUDED_FROM_PUBLIC_APP_SCOPE")
+        self.assertTrue(rows["lib/safe_app.dart"]["candidate"])
+        self.assertEqual(rows["lib/safe_app.dart"]["audit_status"], "PASS_AS_IS")
+        self.assertEqual(report["candidate_audit"]["tracked"], len(rows))
+        self.assertEqual(report["candidate_audit"]["candidate"] +
+                         report["candidate_audit"]["excluded"], len(rows))
+
+
 if __name__ == "__main__":
     unittest.main()

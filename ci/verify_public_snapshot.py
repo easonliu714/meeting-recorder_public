@@ -58,6 +58,9 @@ PRIVATE_ONLY_TESTS = {
     # Private inventory and legacy signing/UAT tools have Public replacements.
     "tool/private_exact_head_inventory.py",
     "tool/tests/test_private_exact_head_inventory.py",
+    # Read-only Private exporter handoff and its synthetic tests never ship.
+    "tool/private_public_export_preflight.py",
+    "tool/tests/test_private_public_export_preflight.py",
     "tool/verify_signed_android_apk.py",
     "tool/tests/test_verify_signed_android_apk.py",
     "tool/verify_uat_artifact_zip.py",
