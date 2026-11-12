@@ -210,6 +210,30 @@ def read_candidate_allowlist(path: Path, head: str) -> dict[str, str]:
     return approved
 
 
+
+def verify_candidate_report_against_private_tree(
+        private: Path, head: str, report_path: Path) -> None:
+    """Bind a confidential allowlist to the immutable full-tree scanner.
+
+    A schema-valid report can otherwise promote a runtime-dataflow HOLD to
+    PASS_AS_IS while keeping its summary counts internally consistent.
+    Recompute the complete candidate decisions from the trusted Private Git
+    objects before ANY dry-run or copy; never trust a user-edited status.
+    Reviewed sanitizations need a separate attested flow, not this bypass.
+    """
+    # Delayed import avoids a module cycle: inventory imports the origin guard
+    # from this exporter. No report bytes or source contents enter CI logs.
+    from private_inventory_report import inventory_private_head
+
+    try:
+        supplied = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise PublicationHold("PRIVATE_CANDIDATE_REPORT_MISSING_HOLD") from exc
+    independently_scanned = inventory_private_head(private, head)
+    if supplied != independently_scanned:
+        raise PublicationHold("PRIVATE_CANDIDATE_REPORT_RESCAN_MISMATCH_HOLD")
+
+
 def verify_approved_rows(rows: list[dict], approved: dict[str, str]) -> None:
     """Fail closed on missing, extra, or changed source relative to review."""
     if {row["path"] for row in rows} != set(approved):
@@ -332,6 +356,9 @@ def prepare(private: Path, public: Path, head: str, approval_manifest: Path,
     # catches sensitive material even under excluded docs/CI files and refuses
     # the original Private signing-properties .gitignore vulnerability.
     inspect_private_head(private, head)
+    # Schema and count conservation alone do not attest individual decisions.
+    # Bind every claimed PASS to a fresh independent exact-HEAD rescan first.
+    verify_candidate_report_against_private_tree(private, head, approval_manifest)
     approved = read_candidate_allowlist(approval_manifest, head)
     with tempfile.TemporaryDirectory(prefix="mr-public-export-") as temp:
         staged = Path(temp)

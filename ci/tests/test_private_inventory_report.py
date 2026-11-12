@@ -114,6 +114,57 @@ class ConfidentialInventoryTests(unittest.TestCase):
         self.assertEqual(sum(report["candidate_audit"]["states"].values()),
                          report["candidate_audit"]["candidate"])
 
+
+    def test_private_report_cannot_promote_dataflow_hold_with_forged_counts(self):
+        # Positive: an unmodified full-tree scanner report is bound to HEAD.
+        # Negative: a forged PASS_AS_IS and internally consistent counts must
+        # not turn SharedPreferences dataflow into a Public-export allowlist.
+        from prepare_public_snapshot import (
+            read_candidate_allowlist, verify_candidate_report_against_private_tree,
+        )
+        self.write("lib/preferences.dart",
+                   b"SharedPreferences.getInstance();\\n")
+        self.write("lib/safe.dart", b"int safeValue() => 42;\\n")
+        self.head = self.commit()
+        original = inventory_private_head(self.private, self.head)
+        path = self.base / "confidential-report.json"
+        path.write_text(json.dumps(original), encoding="utf-8")
+        verify_candidate_report_against_private_tree(self.private, self.head, path)
+
+        forged = json.loads(json.dumps(original))
+        row = next(x for x in forged["files"]
+                   if x["path"] == "lib/preferences.dart")
+        self.assertEqual(row["audit_status"], "HOLD_REVIEW")
+        self.assertEqual(row["decision"], "HOLD")
+        row["audit_status"] = "PASS_AS_IS"
+        row["audit_reason"] = "BATCH_OWNER_RIGHTS_AND_STATIC_SCAN_PASS"
+        states = forged["candidate_audit"]["states"]
+        states["HOLD_REVIEW"] -= 1
+        states["PASS_AS_IS"] += 1
+        forged["candidate_audit"]["copyable"] += 1
+        path.write_text(json.dumps(forged), encoding="utf-8")
+        # A schema/conservation-only parser would accept this promotion.
+        self.assertIn("lib/preferences.dart",
+                      read_candidate_allowlist(path, self.head))
+        with self.assertRaisesRegex(PublicationHold, "RESCAN_MISMATCH"):
+            verify_candidate_report_against_private_tree(
+                self.private, self.head, path)
+
+        # Also reject a forged source hash, even if both digest fields agree.
+        forged = json.loads(json.dumps(original))
+        row = next(x for x in forged["files"] if x["path"] == "lib/safe.dart")
+        self.assertEqual(row["audit_status"], "PASS_AS_IS")
+        row["sha256"] = "a" * 64
+        row["source_sha256"] = "a" * 64
+        path.write_text(json.dumps(forged), encoding="utf-8")
+        with self.assertRaisesRegex(PublicationHold, "RESCAN_MISMATCH"):
+            verify_candidate_report_against_private_tree(
+                self.private, self.head, path)
+        with self.assertRaisesRegex(PublicationHold, "REPORT_MISSING"):
+            verify_candidate_report_against_private_tree(
+                self.private, self.head, self.base / "missing.json")
+
+
     def test_modified_candidate_blob_and_unreviewed_binary_fail_closed(self):
         self.write("lib/safe.dart", b"const key = 'gsk_" + b"x" * 40 + b"';")
         self.write("android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png",
