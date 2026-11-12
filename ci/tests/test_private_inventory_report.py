@@ -66,6 +66,50 @@ class ConfidentialInventoryTests(unittest.TestCase):
         self.assertNotIn("ghp_", json.dumps(report))
         self.assertEqual(sum(report["counts"].values()), len(rows))
 
+    def test_candidate_conservation_and_no_unreviewed_publication(self):
+        self.write("android/app/build.gradle.kts",
+                   b'android { defaultConfig { applicationId = "com.example.meeting_recorder" } }')
+        self.write("lib/safe.dart", b"int safeValue() => 42;\n")
+        self.write("lib/preferences.dart", b"SharedPreferences.getInstance();")
+        self.write("pubspec.lock", b"packages:\n  example: third_party\n")
+        self.write("tool/private_exact_head_inventory.py", b"private inventory")
+        self.head = self.commit()
+        report = inventory_private_head(self.private, self.head)
+        rows = {row["path"]: row for row in report["files"]}
+        audit = report["candidate_audit"]
+        self.assertEqual(audit["tracked"], len(rows))
+        self.assertEqual(audit["candidate"] + audit["excluded"], len(rows))
+        self.assertEqual(sum(audit["states"].values()), audit["candidate"])
+        self.assertEqual(audit["actually_copied"], 0)
+        self.assertEqual(rows["lib/safe.dart"]["audit_status"], "PASS_AS_IS")
+        self.assertEqual(rows["lib/preferences.dart"]["audit_status"], "HOLD_REVIEW")
+        self.assertEqual(rows["lib/secret.dart"]["audit_status"], "HOLD_REVIEW")
+        self.assertEqual(rows["pubspec.lock"]["audit_status"], "HOLD_REVIEW")
+        self.assertEqual(rows["android/app/build.gradle.kts"]["audit_status"],
+                         "NEEDS_SANITIZATION")
+        self.assertIsNone(rows["android/app/build.gradle.kts"]["safe_copy_sha256"])
+        self.assertFalse(rows["tool/private_exact_head_inventory.py"]["candidate"])
+        self.assertIsNone(rows["tool/private_exact_head_inventory.py"]["audit_status"])
+        self.assertEqual(
+            audit["copyable"],
+            audit["states"]["PASS_AS_IS"] + audit["states"]["PASS_SANITIZED"],
+        )
+        self.assertNotIn("ghp_", json.dumps(report))
+
+    def test_modified_candidate_blob_and_unreviewed_binary_fail_closed(self):
+        self.write("lib/safe.dart", b"const key = 'gsk_" + b"x" * 40 + b"';")
+        self.write("android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png",
+                   b"not-a-png")
+        self.head = self.commit()
+        report = inventory_private_head(self.private, self.head)
+        rows = {row["path"]: row for row in report["files"]}
+        self.assertEqual(rows["lib/safe.dart"]["audit_status"], "HOLD_REVIEW")
+        self.assertEqual(
+            rows["android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png"]["audit_status"],
+            "HOLD_REVIEW",
+        )
+        self.assertEqual(report["candidate_audit"]["actually_copied"], 0)
+
     def test_wrong_head_origin_and_mutated_worktree_are_handled(self):
         with self.assertRaisesRegex(PublicationHold, "CHECKOUT_HEAD"):
             inventory_private_head(self.private, "0" * 40)

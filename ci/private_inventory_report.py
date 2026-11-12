@@ -18,9 +18,77 @@ from audit_private_git_head import (
     KNOWN_PRIVATE_BINARY, PublicationHold, inspect_text, private_git,
 )
 from verify_public_snapshot import (
-    OWNER_APPROVED_ICON_GIT_BLOBS, PRIVATE_ONLY_TESTS, _allowed_source,
+    OWNER_APPROVED_ICON_GIT_BLOBS, ORIGINAL_FONT_ASSETS,
+    PRIVATE_ONLY_TESTS, PUBLIC_GRADLE_PATH, _allowed_source,
 )
 from prepare_public_snapshot import require_trusted_repo_origin
+
+
+
+# Owner batch rights cover self-owned Source/Test, never real secrets or third-party
+# exceptions. No PASS_SANITIZED without verified transformed bytes and tests.
+CANDIDATE_STATES = (
+    "NOT_SCANNED", "PASS_AS_IS", "NEEDS_SANITIZATION",
+    "PASS_SANITIZED", "HOLD_REVIEW",
+)
+DATAFLOW_REVIEW = re.compile(
+    rb"SharedPreferences|shared_preferences|app_logs|image\.path|"
+    rb"Authorization|api[_-]?key|apiKey|access[_-]?token|"
+    rb"ProviderRaw|recordingPath|File\(|content://|file://",
+    re.I,
+)
+
+
+def classify_candidate_audit(path: str, blob: str, data: bytes,
+                             decision: str, reason: str,
+                             digest: str) -> tuple[str | None, str]:
+    """Fail closed on unresolved rights/dataflow; never alter Private bytes."""
+    if not _allowed_source(path):
+        return None, "EXCLUDED_FROM_PUBLIC_APP_SCOPE"
+    if path == PUBLIC_GRADLE_PATH:
+        return "NEEDS_SANITIZATION", "PUBLIC_APP_ID_TRANSFORM_AND_PARITY_REQUIRED"
+    if path in OWNER_APPROVED_ICON_GIT_BLOBS:
+        if (blob == OWNER_APPROVED_ICON_GIT_BLOBS[path] and
+                data.startswith(b"\x89PNG\r\n\x1a\n")):
+            return "PASS_AS_IS", "PINNED_OWNER_ICON_AND_REPRODUCTION_GATE"
+        return "HOLD_REVIEW", "ICON_CONTENT_OR_PIN_MISMATCH"
+    if path in ORIGINAL_FONT_ASSETS:
+        size, expected = ORIGINAL_FONT_ASSETS[path]
+        if len(data) == size and digest == expected:
+            return "PASS_AS_IS", "PINNED_OFL_FONT_ASSET"
+        return "HOLD_REVIEW", "THIRD_PARTY_FONT_OR_LICENSE_MISMATCH"
+    if decision == "DENY":
+        return "HOLD_REVIEW", reason
+    if decision != "HOLD":
+        return "HOLD_REVIEW", "UNEXPECTED_INVENTORY_DECISION"
+    if path in {"pubspec.yaml", "pubspec.lock"}:
+        return "HOLD_REVIEW", "THIRD_PARTY_SDK_LICENSE_REVIEW"
+    if path == "lib/main.dart" or path.startswith("tool/patch_"):
+        return "HOLD_REVIEW", "GENERATED_SOURCE_PRIVACY_AND_PARITY_REVIEW"
+    if path.endswith((".png", ".ttf")) or b"\0" in data:
+        return "HOLD_REVIEW", "BINARY_CONTENT_REVIEW"
+    if DATAFLOW_REVIEW.search(data):
+        return "HOLD_REVIEW", "RUNTIME_DATAFLOW_REVIEW"
+    return "PASS_AS_IS", "BATCH_OWNER_RIGHTS_AND_STATIC_SCAN_PASS"
+
+
+def summarize_candidate_audit(rows: list[dict]) -> dict:
+    """Conservation across exactly the candidate rows; no guessed approvals."""
+    candidates = [row for row in rows if row["candidate"]]
+    counts = {state: sum(row["audit_status"] == state for row in candidates)
+              for state in CANDIDATE_STATES}
+    if sum(counts.values()) != len(candidates):
+        raise PublicationHold("CANDIDATE_AUDIT_CONSERVATION_HOLD")
+    return {
+        "tracked": len(rows),
+        "candidate": len(candidates),
+        "excluded": len(rows) - len(candidates),
+        "states": counts,
+        "copyable": counts["PASS_AS_IS"] + counts["PASS_SANITIZED"],
+        # Inventory alone is NOT a GitHub Public commit/readback.
+        "actually_copied": 0,
+    }
+
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -80,16 +148,22 @@ def inventory_private_head(private: Path, head: str) -> dict:
                 decision, reason = "DENY", "TEXT_SECRET_OR_PII_PATTERN_REVIEW"
             else:
                 decision, reason = "HOLD", "SOURCE_RIGHTS_PRIVACY_DATAFLOW_REVIEW"
+        audit_status, audit_reason = classify_candidate_audit(
+            path, blob, data, decision, reason, digest)
         rows.append({"path": path, "git_blob_sha1": blob, "sha256": digest,
+                     "source_sha256": digest, "safe_copy_sha256": None,
+                     "candidate": audit_status is not None,
+                     "audit_status": audit_status, "audit_reason": audit_reason,
                      "decision": decision, "reason": reason})
     if not rows:
         raise PublicationHold("INVENTORY_EMPTY_TREE_HOLD")
     rows.sort(key=lambda row: row["path"])
     counts = {state: sum(row["decision"] == state for row in rows)
               for state in ("ALLOW", "DENY", "HOLD")}
-    return {"schema": 1, "private_source_head": head,
+    return {"schema": 2, "private_source_head": head,
             "classification": "CONFIDENTIAL_LOCAL_REVIEW_ONLY_NOT_PUBLICATION_APPROVAL",
-            "counts": counts, "files": rows}
+            "counts": counts, "candidate_audit": summarize_candidate_audit(rows),
+            "files": rows}
 
 
 def save_confidential_report(report: dict, destination: Path,
@@ -128,8 +202,14 @@ def main() -> int:
     except (PublicationHold, OSError) as exc:
         print("PRIVATE_INVENTORY_HOLD:" + str(exc))
         return 1
+    summary = report["candidate_audit"]
     print("PRIVATE_INVENTORY_LOCAL_ONLY_FILES=" + str(len(report["files"])))
-    print("PUBLIC_SOURCE_COPY_REMAINS_HOLD_PENDING_FILE_RIGHTS_PRIVACY_PARITY")
+    print("N_CANDIDATE=" + str(summary["candidate"]))
+    for state in CANDIDATE_STATES:
+        print("N_" + state + "=" + str(summary["states"][state]))
+    print("N_COPYABLE=" + str(summary["copyable"]))
+    print("N_ACTUALLY_COPIED=0")
+    print("PUBLIC_SOURCE_COPY_REMAINS_HOLD_PENDING_FULL_AUDIT_AND_DRY_RUN")
     return 0
 
 

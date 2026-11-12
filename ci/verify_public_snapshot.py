@@ -55,6 +55,13 @@ PRIVATE_ONLY_TESTS = {
     "tool/tests/test_private_ci_event_policy.py",
     "tool/tests/test_generated_android_build_identity.py",
     "tool/tests/test_generated_groq_native_delivery_gate.py",
+    # Private inventory and legacy signing/UAT tools have Public replacements.
+    "tool/private_exact_head_inventory.py",
+    "tool/tests/test_private_exact_head_inventory.py",
+    "tool/verify_signed_android_apk.py",
+    "tool/tests/test_verify_signed_android_apk.py",
+    "tool/verify_uat_artifact_zip.py",
+    "tool/tests/test_verify_uat_artifact_zip.py",
 }
 FORBIDDEN_PREFIXES = (
     "evidence/", "docs/", ".idx/", ".vscode/", "recordings/",
