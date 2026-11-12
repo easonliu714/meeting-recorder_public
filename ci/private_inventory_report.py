@@ -54,10 +54,40 @@ def executable_dataflow_view(path: str, data: bytes) -> bytes:
     if (not path.endswith((".dart", ".kt", ".kts")) or
             b'"""' in data or b"'''" in data):
         return data
+    # Keep original line numbers in confidential diagnostics. Only the
+    # comment text is discarded; executable bytes and newline positions stay.
     return b"".join(
-        b"" if line.lstrip().startswith(b"//") else line
+        (b"\r\n" if line.endswith(b"\r\n") else
+         b"\n" if line.endswith(b"\n") else b"")
+        if line.lstrip().startswith(b"//") else line
         for line in data.splitlines(keepends=True)
     )
+
+
+# Review evidence is confidential metadata only: never record matched
+# credentials, snippets, raw paths or provider payloads in the report.
+DATAFLOW_SIGNAL_PATTERNS = (
+    ("LOCAL_PREFERENCES", re.compile(rb"SharedPreferences|shared_preferences", re.I)),
+    ("LOGGING", re.compile(rb"app_logs", re.I)),
+    ("AUTHORIZATION", re.compile(rb"Authorization", re.I)),
+    ("KEY_REFERENCE", re.compile(rb"api[_-]?key|apiKey|access[_-]?token", re.I)),
+    ("PROVIDER_RAW", re.compile(rb"ProviderRaw", re.I)),
+    ("MEDIA_PATH", re.compile(rb"image\\.path|recordingPath|content://|file://", re.I)),
+    ("FILE_IO", re.compile(rb"File\\(", re.I)),
+)
+
+
+def dataflow_review_evidence(path: str, data: bytes) -> list[dict]:
+    """Identify review sites without exposing their matched values."""
+    lines = executable_dataflow_view(path, data).splitlines()
+    evidence = []
+    for kind, pattern in DATAFLOW_SIGNAL_PATTERNS:
+        hits = [number for number, line in enumerate(lines, 1)
+                if pattern.search(line)]
+        if hits:
+            evidence.append({"kind": kind, "lines": hits[:20],
+                             "truncated": len(hits) > 20})
+    return evidence
 
 
 def classify_candidate_audit(path: str, blob: str, data: bytes,
@@ -177,6 +207,9 @@ def inventory_private_head(private: Path, head: str) -> dict:
                      "source_sha256": digest, "safe_copy_sha256": None,
                      "candidate": audit_status is not None,
                      "audit_status": audit_status, "audit_reason": audit_reason,
+                     "review_evidence": (
+                         dataflow_review_evidence(path, data)
+                         if audit_reason == "RUNTIME_DATAFLOW_REVIEW" else []),
                      "decision": decision, "reason": reason})
     if not rows:
         raise PublicationHold("INVENTORY_EMPTY_TREE_HOLD")

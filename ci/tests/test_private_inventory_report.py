@@ -97,6 +97,37 @@ class ConfidentialInventoryTests(unittest.TestCase):
         self.assertNotIn("ghp_", json.dumps(report))
 
 
+    def test_confidential_dataflow_evidence_is_line_only_and_fail_closed(self):
+        # Positive: real executable dataflow is located by line and category,
+        # while standalone comments are ignored without shifting line numbers.
+        self.write("lib/evidence.dart",
+                   b"// Authorization SharedPreferences apiKey documentation\\n"
+                   b"final prefs = SharedPreferences.getInstance();\\n"
+                   b"final h = 'Authorization: Bearer runtime';\\n")
+        self.write("lib/multiline_evidence.dart",
+                   b"const embedded = '''\\n// Authorization\\n''';\\n")
+        secret = b"gsk_" + b"x" * 40
+        self.write("lib/secret_evidence.dart",
+                   b"const leaked = '" + secret + b"';\\n")
+        self.head = self.commit()
+        report = inventory_private_head(self.private, self.head)
+        rows = {row["path"]: row for row in report["files"]}
+        self.assertEqual(rows["lib/evidence.dart"]["audit_status"],
+                         "HOLD_REVIEW")
+        self.assertEqual(rows["lib/evidence.dart"]["review_evidence"], [
+            {"kind": "LOCAL_PREFERENCES", "lines": [2], "truncated": False},
+            {"kind": "AUTHORIZATION", "lines": [3], "truncated": False},
+        ])
+        self.assertEqual(rows["lib/multiline_evidence.dart"]["review_evidence"],
+                         [{"kind": "AUTHORIZATION", "lines": [2],
+                           "truncated": False}])
+        self.assertEqual(rows["lib/secret_evidence.dart"]["audit_status"],
+                         "HOLD_REVIEW")
+        self.assertEqual(rows["lib/secret_evidence.dart"]["review_evidence"], [])
+        self.assertNotIn(secret.decode(), json.dumps(report))
+        self.assertEqual(sum(report["candidate_audit"]["states"].values()),
+                         report["candidate_audit"]["candidate"])
+
     def test_comment_only_dataflow_is_not_secret_but_executable_remains_hold(self):
         # Positive: documentation names do not create a runtime data leak.
         # Negative: real executable paths, multiline literals and credentials
