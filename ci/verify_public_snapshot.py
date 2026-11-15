@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,7 +78,9 @@ FORBIDDEN_NAMES = {
     "service-account.json", "google-services.json",
 }
 FORBIDDEN_EXTENSIONS = {
-    ".wav", ".mp3", ".m4a", ".aac", ".mp4", ".ogg", ".apk", ".aab",
+    ".wav", ".mp3", ".m4a", ".aac", ".mp4", ".ogg", ".flac", ".opus",
+    ".oga", ".aif", ".aiff", ".amr", ".caf", ".pcm", ".raw", ".wma",
+    ".m4b", ".mka", ".alac", ".3gp", ".3gpp", ".webm", ".part", ".apk", ".aab",
     ".jks", ".keystore", ".p12", ".pfx", ".pem", ".key", ".sqlite",
     ".sqlite3", ".db", ".zip", ".tar", ".log", ".jsonl", ".png",
     ".jpg", ".jpeg", ".webp", ".ico",
@@ -136,6 +139,68 @@ SENSITIVE_PATTERNS = [
 
 class PublicationHold(Exception):
     pass
+
+
+def verify_owner_icon_png(data: bytes) -> None:
+    """Validate exact-pinned self-made icons; reject text/EXIF and hidden bytes.
+
+    The Owner-approved asset source contains fixed-format sRGB/gAMA/pHYs;
+    these are safe before IDAT. This complements the Git Blob SHA-1 pin.
+    """
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise PublicationHold("OWNER_ICON_PNG_SIGNATURE_HOLD")
+    offset = 8
+    header = pixels = False
+    seen: set[bytes] = set()
+    n_chunks = 0
+    while offset < len(data):
+        if offset + 12 > len(data):
+            raise PublicationHold("OWNER_ICON_PNG_TRUNCATED_HOLD")
+        size = int.from_bytes(data[offset:offset + 4], "big")
+        kind = data[offset + 4:offset + 8]
+        if size > len(data) - offset - 12:
+            raise PublicationHold("OWNER_ICON_PNG_TRUNCATED_HOLD")
+        end = offset + size + 12
+        payload = data[offset + 8:end - 4]
+        if zlib.crc32(kind + payload) & 0xffffffff != int.from_bytes(data[end - 4:end], "big"):
+            raise PublicationHold("OWNER_ICON_PNG_CRC_HOLD")
+        n_chunks += 1
+        if n_chunks > 4096:
+            raise PublicationHold("OWNER_ICON_PNG_CHUNK_LIMIT_HOLD")
+        if kind == b"IHDR":
+            if n_chunks != 1 or size != 13 or header:
+                raise PublicationHold("OWNER_ICON_PNG_IHDR_HOLD")
+            width, height = int.from_bytes(payload[:4], "big"), int.from_bytes(payload[4:8], "big")
+            if not (0 < width <= 8192 and 0 < height <= 8192):
+                raise PublicationHold("OWNER_ICON_PNG_DIMENSIONS_HOLD")
+            if payload[8:] != b"\x08\x06\x00\x00\x00":
+                raise PublicationHold("OWNER_ICON_PNG_FORMAT_HOLD")
+            header = True
+        elif kind in (b"sRGB", b"gAMA", b"pHYs"):
+            if not header or pixels or kind in seen:
+                raise PublicationHold("OWNER_ICON_PNG_METADATA_ORDER_HOLD")
+            valid = (
+                (kind == b"sRGB" and size == 1 and payload[0] <= 3) or
+                (kind == b"gAMA" and size == 4 and int.from_bytes(payload, "big") > 0) or
+                (kind == b"pHYs" and size == 9 and payload[-1] in (0, 1))
+            )
+            if not valid:
+                raise PublicationHold("OWNER_ICON_PNG_METADATA_FORMAT_HOLD")
+            seen.add(kind)
+        elif kind == b"IDAT":
+            if not header or size == 0:
+                raise PublicationHold("OWNER_ICON_PNG_IDAT_ORDER_HOLD")
+            pixels = True
+        elif kind == b"IEND":
+            if not header or not pixels or size:
+                raise PublicationHold("OWNER_ICON_PNG_IEND_HOLD")
+            if end != len(data):
+                raise PublicationHold("OWNER_ICON_PNG_TRAILING_DATA_HOLD")
+            return
+        else:
+            raise PublicationHold("OWNER_ICON_PNG_UNREVIEWED_CHUNK_HOLD")
+        offset = end
+    raise PublicationHold("OWNER_ICON_PNG_MISSING_IEND_HOLD")
 
 
 def _allowed_source(path: str) -> bool:
@@ -305,6 +370,7 @@ def audit(root: Path) -> str:
             object_bytes = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
             if hashlib.sha1(object_bytes).hexdigest() != OWNER_APPROVED_ICON_GIT_BLOBS[path]:
                 raise PublicationHold("OWNER_ICON_BLOB_MISMATCH:" + path)
+            verify_owner_icon_png(data)
         if path not in BINARY_WHITELIST:
             try:
                 content = data.decode("utf-8")

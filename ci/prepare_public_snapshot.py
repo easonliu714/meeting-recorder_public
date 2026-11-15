@@ -21,7 +21,7 @@ from verify_public_snapshot import (
     BINARY_WHITELIST, BOOTSTRAP_FILES, MANIFEST, REQUIRED_SOURCE_FILES,
     OWNER_APPROVED_ICON_GIT_BLOBS, PUBLIC_APP_ID, PUBLIC_GRADLE_PATH,
     SENSITIVE_PATTERNS, PublicationHold, _allowed_source, audit,
-    mask_gradle_comments,
+    mask_gradle_comments, verify_owner_icon_png,
 )
 
 # These are the Owner-supplied original files, not a regenerated font.
@@ -94,6 +94,7 @@ def inspect_bytes(path: str, data: bytes) -> str:
         object_bytes = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
         if hashlib.sha1(object_bytes).hexdigest() != OWNER_APPROVED_ICON_GIT_BLOBS[path]:
             raise PublicationHold("OWNER_ICON_BLOB_MISMATCH_HOLD:" + path)
+        verify_owner_icon_png(data)
     if path in BINARY_WHITELIST:
         return digest
     if len(data) > 1_000_000 or b"\0" in data:

@@ -29,7 +29,10 @@ FORBIDDEN_TRACKED_NAMES = {
 }
 FORBIDDEN_TRACKED_SUFFIXES = {
     ".jks", ".keystore", ".p12", ".pfx", ".pem", ".key",
-    ".wav", ".mp3", ".aac", ".m4a", ".mp4", ".sqlite", ".db",
+    ".wav", ".mp3", ".aac", ".m4a", ".mp4", ".ogg", ".flac",
+    ".opus", ".oga", ".aif", ".aiff", ".amr", ".caf", ".pcm",
+    ".raw", ".wma", ".m4b", ".mka", ".alac", ".3gp", ".3gpp",
+    ".webm", ".part", ".sqlite", ".db",
     ".zip", ".log", ".jsonl",
 }
 PROPERTIES_SECRET = re.compile(

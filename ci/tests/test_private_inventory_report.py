@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zlib
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -375,6 +376,78 @@ class ConfidentialInventoryTests(unittest.TestCase):
         self.assertEqual(report["candidate_audit"]["tracked"], len(rows))
         self.assertEqual(report["candidate_audit"]["candidate"] +
                          report["candidate_audit"]["excluded"], len(rows))
+
+
+class GateBOwnerIconTests(unittest.TestCase):
+    """Positive and fail-closed tests using real Production imports."""
+
+    @staticmethod
+    def chunk(name, content):
+        return (len(content).to_bytes(4, "big") + name + content +
+                (zlib.crc32(name + content) & 0xffffffff).to_bytes(4, "big"))
+
+    @classmethod
+    def png(cls, metadata=(), trailing=b""):
+        ihdr = cls.chunk(b"IHDR", b"\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0")
+        mid = b"".join(cls.chunk(name, content) for name, content in metadata)
+        idat = cls.chunk(b"IDAT", zlib.compress(b"\0\0\0\0\xff"))
+        return (b"\x89PNG\r\n\x1a\n" + ihdr + mid + idat +
+                cls.chunk(b"IEND", b"") + trailing)
+
+    def check_classification(self, data):
+        from private_inventory_report import classify_candidate_audit
+        from prepare_public_snapshot import inspect_bytes
+        name = "assets/app_icon.png"
+        sha = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+        with patch.dict(OWNER_APPROVED_ICON_GIT_BLOBS, {name: sha}):
+            status, reason = classify_candidate_audit(
+                name, sha, data, "ALLOW", "EXACT_OWNER_APPROVED_ICON_ONLY",
+                hashlib.sha256(data).hexdigest())
+            if status == "PASS_AS_IS":
+                self.assertEqual(inspect_bytes(name, data),
+                                 hashlib.sha256(data).hexdigest())
+            else:
+                with self.assertRaises(PublicationHold):
+                    inspect_bytes(name, data)
+        return status
+
+    def test_valid_pinned_rgba_and_known_color_chunks(self):
+        self.assertEqual(self.check_classification(self.png()), "PASS_AS_IS")
+        color = [(b"sRGB", b"\0"), (b"gAMA", b"\0\0\xb1\x8f"),
+                 (b"pHYs", b"\0\0\x0e\xc3\0\0\x0e\xc3\x01")]
+        self.assertEqual(self.check_classification(self.png(color)), "PASS_AS_IS")
+
+    def test_negative_corrupt_secret_embedded_and_unknown_png(self):
+        good = self.png()
+        cases = (b"not_png", good[:-7], good + b"secret",
+                 good[:43] + bytes([good[43] ^ 1]) + good[44:],
+                 self.png([(b"tEXt", b"password\0secret")]),
+                 self.png([(b"iTXt", b"private\0data")]),
+                 self.png([(b"zTXt", b"private\0compressed")]),
+                 self.png([(b"eXIf", b"private")]),
+                 self.png([(b"iCCP", b"profile\0payload")]),
+                 self.png([(b"unkN", b"unreviewed")]),
+                 self.png([(b"sRGB", b"\0"), (b"sRGB", b"\0")]))
+        for index, value in enumerate(cases):
+            with self.subTest(index=index):
+                self.assertEqual(self.check_classification(value),
+                                 "HOLD_REVIEW")
+
+    def test_wrong_pin_web_assets_and_audio_fail_closed(self):
+        from private_inventory_report import classify_candidate_audit
+        from verify_public_snapshot import _allowed_source
+        raw = self.png()
+        self.assertEqual(classify_candidate_audit(
+            "assets/app_icon.png", "0" * 40, raw, "HOLD", "MISMATCH",
+            hashlib.sha256(raw).hexdigest())[0], "HOLD_REVIEW")
+        for name in ("web/icons/Icon-192.png", "web/favicon.png",
+                     "assets/unapproved.png", "lib/owner.wav", "test/raw.aac",
+                     "tool/chunk.flac", "lib/clip.opus", "tool/staging.part",
+                     "recordings/owner.m4a"):
+            with self.subTest(name=name):
+                self.assertFalse(_allowed_source(name))
+                self.assertIsNone(classify_candidate_audit(
+                    name, "", b"data", "DENY", "EXCLUDED", "")[0])
 
 
 if __name__ == "__main__":

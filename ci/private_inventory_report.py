@@ -22,6 +22,7 @@ from audit_private_git_head import (
 from verify_public_snapshot import (
     OWNER_APPROVED_ICON_GIT_BLOBS, ORIGINAL_FONT_ASSETS,
     PRIVATE_ONLY_TESTS, PUBLIC_GRADLE_PATH, _allowed_source,
+    verify_owner_icon_png,
 )
 from prepare_public_snapshot import require_trusted_repo_origin
 
@@ -103,9 +104,12 @@ def classify_candidate_audit(path: str, blob: str, data: bytes,
     if path == PUBLIC_GRADLE_PATH:
         return "NEEDS_SANITIZATION", "PUBLIC_APP_ID_TRANSFORM_AND_PARITY_REQUIRED"
     if path in OWNER_APPROVED_ICON_GIT_BLOBS:
-        if (blob == OWNER_APPROVED_ICON_GIT_BLOBS[path] and
-                data.startswith(b"\x89PNG\r\n\x1a\n")):
-            return "PASS_AS_IS", "PINNED_OWNER_ICON_AND_REPRODUCTION_GATE"
+        if blob == OWNER_APPROVED_ICON_GIT_BLOBS[path]:
+            try:
+                verify_owner_icon_png(data)
+            except PublicationHold:
+                return "HOLD_REVIEW", "ICON_PNG_STRUCTURE_OR_METADATA_HOLD"
+            return "PASS_AS_IS", "PINNED_OWNER_ICON_AND_PNG_STRUCTURE_GATE"
         return "HOLD_REVIEW", "ICON_CONTENT_OR_PIN_MISMATCH"
     if path in ORIGINAL_FONT_ASSETS:
         size, expected = ORIGINAL_FONT_ASSETS[path]
