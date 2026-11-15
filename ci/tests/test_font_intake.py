@@ -24,7 +24,11 @@ class OriginalFontIntakeTests(unittest.TestCase):
                 payload = (ROOT / path).read_bytes()
                 self.assertEqual(len(payload), size)
                 self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
-        self.assertIn(audit(ROOT), ("FONT_ASSETS_READY", "SOURCE_INTEGRITY_READY"))
+        # Exact original font hashes remain mandatory with pinned icon-only intake.
+        self.assertIn(audit(ROOT), (
+            "FONT_ASSETS_READY", "PARTIAL_PINNED_ICON_ASSETS_READY",
+            "PINNED_ICON_ASSETS_READY", "SOURCE_INTEGRITY_READY",
+        ))
 
     def test_partial_or_unlisted_font_intake_does_not_count_as_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
