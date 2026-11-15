@@ -318,6 +318,21 @@ def audit(root: Path) -> str:
         if actual == BOOTSTRAP_FILES | set(ORIGINAL_FONT_ASSETS):
             _audit_original_fonts(root)
             return "FONT_ASSETS_READY"
+        # Owner-approved PNGs are permissible as a standalone asset intake,
+        # never as source/App CI approval. Fail closed on every extra path.
+        icon_paths = actual - BOOTSTRAP_FILES - set(ORIGINAL_FONT_ASSETS)
+        if (icon_paths and icon_paths <= set(OWNER_APPROVED_ICON_GIT_BLOBS)
+                and actual == BOOTSTRAP_FILES | set(ORIGINAL_FONT_ASSETS) | icon_paths):
+            _audit_original_fonts(root)
+            for path in sorted(icon_paths):
+                data = (root / path).read_bytes()
+                object_bytes = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+                if hashlib.sha1(object_bytes).hexdigest() != OWNER_APPROVED_ICON_GIT_BLOBS[path]:
+                    raise PublicationHold("BOOTSTRAP_OWNER_ICON_BLOB_MISMATCH:" + path)
+                verify_owner_icon_png(data)
+            if icon_paths == set(OWNER_APPROVED_ICON_GIT_BLOBS):
+                return "PINNED_ICON_ASSETS_READY"
+            return "PARTIAL_PINNED_ICON_ASSETS_READY"
         raise PublicationHold("UNATTESTED_SOURCE_IN_BOOTSTRAP")
     # Full Source+Test attestation is NOT a bypass around original asset hashes.
     _audit_original_fonts(root)

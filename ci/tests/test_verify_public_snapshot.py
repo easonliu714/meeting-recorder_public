@@ -5,10 +5,13 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import zlib
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from verify_public_snapshot import (  # noqa: E402
-    BOOTSTRAP_FILES, ORIGINAL_FONT_ASSETS, REQUIRED_SOURCE_FILES, PublicationHold, audit,
+    BOOTSTRAP_FILES, ORIGINAL_FONT_ASSETS, OWNER_APPROVED_ICON_GIT_BLOBS,
+    REQUIRED_SOURCE_FILES, PublicationHold, audit,
 )
 
 
@@ -21,6 +24,77 @@ class PublicationBoundaryTests(unittest.TestCase):
             target = self.root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("bootstrap", encoding="utf-8")
+
+    @staticmethod
+    def _icon_chunk(kind, payload):
+        return (len(payload).to_bytes(4, "big") + kind + payload +
+                (zlib.crc32(kind + payload) & 0xffffffff).to_bytes(4, "big"))
+
+    @classmethod
+    def _icon_png(cls, extra=b"", trailing=b""):
+        ihdr = cls._icon_chunk(b"IHDR", b"\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0")
+        idat = cls._icon_chunk(b"IDAT", zlib.compress(b"\0\0\0\0\xff"))
+        return (b"\x89PNG\r\n\x1a\n" + ihdr + extra + idat +
+                cls._icon_chunk(b"IEND", b"") + trailing)
+
+    def _install_original_font_files(self):
+        source = Path(__file__).resolve().parents[2]
+        for path in ORIGINAL_FONT_ASSETS:
+            file = self.root / path
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes((source / path).read_bytes())
+
+    def _install_synthetic_icon(self, data):
+        path = "android/app/src/main/res/mipmap-mdpi/ic_launcher.png"
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        sha = hashlib.sha1(b"blob " + str(len(data)).encode() +
+                           b"\0" + data).hexdigest()
+        return path, sha
+
+    def test_owner_icon_bootstrap_requires_fonts_exact_pin_and_is_not_app(self):
+        path, sha = self._install_synthetic_icon(self._icon_png())
+        with patch.dict(OWNER_APPROVED_ICON_GIT_BLOBS, {path: sha}):
+            with self.assertRaisesRegex(PublicationHold, "UNATTESTED_SOURCE"):
+                audit(self.root)
+            self._install_original_font_files()
+            self.assertEqual(audit(self.root), "PARTIAL_PINNED_ICON_ASSETS_READY")
+            self.assertNotEqual(audit(self.root), "SOURCE_INTEGRITY_READY")
+
+    def test_icon_only_bootstrap_rejects_corrupt_and_embedded_payload(self):
+        self._install_original_font_files()
+        valid = self._icon_png()
+        bad = (valid[:-7], valid + b"private trailing bytes",
+               self._icon_png(extra=self._icon_chunk(
+                   b"tEXt", b"Comment\0private")),
+               self._icon_png(extra=self._icon_chunk(
+                   b"eXIf", b"private exif")))
+        for index, image in enumerate(bad):
+            with self.subTest(index=index):
+                path, sha = self._install_synthetic_icon(image)
+                with patch.dict(OWNER_APPROVED_ICON_GIT_BLOBS, {path: sha}):
+                    with self.assertRaisesRegex(PublicationHold, "PNG_"):
+                        audit(self.root)
+        path, _ = self._install_synthetic_icon(valid)
+        with self.assertRaisesRegex(PublicationHold, "BLOB_MISMATCH"):
+            audit(self.root)
+
+    def test_icon_only_bootstrap_blocks_unapproved_web_png_audio_and_source(self):
+        self._install_original_font_files()
+        path, sha = self._install_synthetic_icon(self._icon_png())
+        with patch.dict(OWNER_APPROVED_ICON_GIT_BLOBS, {path: sha}):
+            for extra in ("web/favicon.png", "assets/unreviewed.png",
+                          "recordings/owner.wav", "tool/raw.part",
+                          "lib/private.dart"):
+                file = self.root / extra
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(b"not authorized")
+                with self.subTest(extra=extra):
+                    with self.assertRaisesRegex(PublicationHold, "UNATTESTED_SOURCE"):
+                        audit(self.root)
+                file.unlink()
+
 
     def make_source(self):
         paths = sorted(REQUIRED_SOURCE_FILES)
