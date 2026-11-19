@@ -4,13 +4,26 @@ This is a **separate Lab-only application**, not the Meeting Recorder public mai
 
 ## Security and data boundary
 
-- This Lab has an independently generated Android application ID: `com.example.meeting_recorder.public_lab_v21.groq_stt_lab`. Do not uninstall earlier Private Lab or Main App for this test. This build does not migrate Raw, Journal, draft or original recordings.
+- This Lab has an independently generated Android application ID: `com.example.meeting_recorder.public_lab_v22.groq_stt_lab`. Do not uninstall earlier Private Lab or Main App for this test. This build does not migrate Raw, Journal, draft or original recordings.
 - The APK is **Debug-only**, not a release and not signed with any Private or long-lived public keystore. It does not offer in-place upgrades for earlier Lab versions.
 - The Android picker reads an Owner-selected local file; source remains read-only. Synthetic fixtures and local-loopback tests only are used in CI.
 - The UI retains optional Groq/Gemini transports that are gated by explicit end-user consent; **CI never executes live Provider requests** and no secrets are used, persisted or embedded. No paid plan, background upload or automatic retry may be enabled.
 - The Public standard-runner workflow is scoped exclusively to this Lab branch and verifies source, tests, Kotlin, Debug APK App ID, signature, provenance and ZIP integrity. The existing Public Main CI/snapshot publication guard remains unchanged.
 - No recordings, transcripts, API credentials, private signing files, build histories, user logs, archived binaries or unreviewed Main source are copied into this branch.
 - Publishing source does not itself assert the right to redistribute third-party components under a new license; respect original dependency licenses. No new open-source license is granted by this snapshot.
+
+## v0.4.17+22 — bounded MP3/AAC leading-PTS recovery
+
+Owner v21 real-device Log recorded MP3 40249us and AAC/M4A 23219us
+first decoded timestamps. The former absolute-zero target got stuck
+at zero rendered PCM frames. Only first-window codec priming up to
+50ms can now rebase sample PTS; actual decoded PCM samples alone are
+written, with no fabricated silence. A raw timestamp origin and
+last-PTS receipt are independently validated in the Dart stage.
+Later-window timestamp drift, source SHA mutation, interior audio gaps,
+corrupt source and incomplete physical PCM still fail closed.
+Encoder priming correction does not prove full acoustic fidelity or
+Groq real Provider E2E. Owner Android verification remains required.
 
 ## v0.4.16+21 — bounded MediaCodec PCM evidence
 
@@ -26,7 +39,7 @@ flutter pub get
 flutter analyze
 flutter test
 (cd android && ./gradlew :app:compileDebugKotlin --no-daemon)
-flutter build apk --debug --no-pub --build-name=0.4.16 --build-number=21
+flutter build apk --debug --no-pub --build-name=0.4.17 --build-number=22
 ```
 
 No API key or provider call is required for local or CI testing.

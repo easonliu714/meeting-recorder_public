@@ -63,7 +63,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.16+21', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.17+22', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {

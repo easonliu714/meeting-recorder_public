@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v21.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v22.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -281,12 +281,19 @@ internal object GroqLabAudioDecoder {
                                     val left = data.short.toInt()
                                     val mono = if (channels == 2)
                                         (left + data.short.toInt()) / 2 else left
-                                    val pts = info.presentationTimeUs +
+                                    val rawPts = info.presentationTimeUs +
                                         i.toLong() * 1_000_000L / rate
-                                    require(lastDecodedUs < 0L || pts > lastDecodedUs) {
+                                    require(lastDecodedUs < 0L || rawPts > lastDecodedUs) {
                                         "LAB_AUDIO_NON_MONOTONIC_PCM_PTS"
                                     }
-                                    if (firstDecodedUs < 0L) firstDecodedUs = pts
+                                    if (firstDecodedUs < 0L) firstDecodedUs = rawPts
+                                    // Only the first wire window may normalize the
+                                    // observed bounded codec priming PTS; no silence.
+                                    val leadingUs = if (startUs == 0L) firstDecodedUs else 0L
+                                    require(leadingUs in 0L..50_000L) {
+                                        "LAB_AUDIO_LEADING_PTS_HOLD"
+                                    }
+                                    val pts = rawPts - leadingUs
                                     if (prevUs >= 0L && pts - prevUs > MAX_GAP_US) {
                                         throw IllegalStateException("LAB_AUDIO_PCM_GAP")
                                     }
@@ -308,7 +315,7 @@ internal object GroqLabAudioDecoder {
                                     }
                                     prevUs = pts
                                     prevMono = mono
-                                    lastDecodedUs = pts
+                                    lastDecodedUs = rawPts
                                 }
                             }
                             outputEos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
@@ -321,8 +328,13 @@ internal object GroqLabAudioDecoder {
                 // timing/frame counters so real MP3/AAC encoder padding can
                 // be distinguished from missing decoded audio without guessing
                 // a fix, padding silence, or emitting an incomplete Chunk.
-                if (!(frames > 0L && frames >= expected - 320L &&
-                        frames <= expected && firstDecodedUs <= startUs &&
+                val leadingUs = if (startUs == 0L) maxOf(0L, firstDecodedUs) else 0L
+                val leadingFrames = leadingUs * TARGET_RATE / 1_000_000L
+                // Compensation is only clock evidence, never PCM bytes.
+                if (!(frames > 0L && frames + leadingFrames >= expected - 320L &&
+                        frames <= expected &&
+                        firstDecodedUs <= startUs +
+                            (if (startUs == 0L) 50_000L else 0L) &&
                         lastDecodedUs >= endUs - 25_000L)) {
                     throw LabPcmWindowEvidence(mapOf(
                         "expected_frames" to expected,
@@ -356,6 +368,9 @@ internal object GroqLabAudioDecoder {
                 "channels" to 1,
                 "bitsPerSample" to 16,
                 "outputFrames" to frames,
+                "firstDecodedPtsUs" to firstDecodedUs,
+                "lastDecodedPtsUs" to lastDecodedUs,
+                "leadingPtsCompensationUs" to if (startUs == 0L) firstDecodedUs else 0L,
                 "requestedStartUs" to startUs,
                 "requestedEndUs" to endUs,
                 "sourceDurationUs" to durationUs,

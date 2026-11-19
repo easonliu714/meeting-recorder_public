@@ -71,6 +71,34 @@ final class LabCompressedWindowPlanner {
   }
 }
 
+/// Accept only physical PCM backed by a bounded first-window PTS origin.
+final class LabNativePcmCoverage {
+  const LabNativePcmCoverage._();
+  static bool accepts({
+    required int outputFrames,
+    required int expectedFrames,
+    required int wireStartUs,
+    required int wireEndUs,
+    required int firstDecodedPtsUs,
+    required int lastDecodedPtsUs,
+    required int leadingPtsCompensationUs,
+  }) {
+    if (expectedFrames <= 0 || outputFrames <= 0 ||
+        outputFrames > expectedFrames || wireStartUs < 0 ||
+        wireEndUs <= wireStartUs || firstDecodedPtsUs < 0 ||
+        lastDecodedPtsUs < firstDecodedPtsUs ||
+        lastDecodedPtsUs < wireEndUs - 25000 ||
+        leadingPtsCompensationUs < 0 ||
+        leadingPtsCompensationUs > 50000) return false;
+    if (wireStartUs == 0) {
+      if (firstDecodedPtsUs != leadingPtsCompensationUs) return false;
+    } else if (leadingPtsCompensationUs != 0 ||
+        firstDecodedPtsUs > wireStartUs) return false;
+    final primingFrames = leadingPtsCompensationUs * 16000 ~/ 1000000;
+    return outputFrames + primingFrames >= expectedFrames - 320;
+  }
+}
+
 final class LabStagedChunk {
   const LabStagedChunk({
     required this.file,
@@ -242,6 +270,9 @@ final class LabAudioPipeline {
             meta['bitsPerSample'] != 16 ||
             meta['decoderVerified'] != true ||
             meta['providerUploadAuthorized'] != false ||
+            meta['firstDecodedPtsUs'] is! int ||
+            meta['lastDecodedPtsUs'] is! int ||
+            meta['leadingPtsCompensationUs'] is! int ||
             !_hex64.hasMatch(meta['wireSha256'] as String)) {
           throw StateError('LAB_NATIVE_OUTPUT_CONTRACT_HOLD');
         }
@@ -259,8 +290,15 @@ final class LabAudioPipeline {
         final frames = meta['outputFrames'];
         final expectedFrames = (w.wireEndMs - w.wireStartMs) * 16;
         if (frames is! int ||
-            frames < expectedFrames - 320 ||
-            frames > expectedFrames ||
+            !LabNativePcmCoverage.accepts(
+              outputFrames: frames,
+              expectedFrames: expectedFrames,
+              wireStartUs: w.wireStartMs * 1000,
+              wireEndUs: w.wireEndMs * 1000,
+              firstDecodedPtsUs: meta['firstDecodedPtsUs'] as int,
+              lastDecodedPtsUs: meta['lastDecodedPtsUs'] as int,
+              leadingPtsCompensationUs: meta['leadingPtsCompensationUs'] as int,
+            ) ||
             bytes != 44 + frames * 2) {
           throw StateError('LAB_NATIVE_INCOMPLETE_AUDIO_WINDOW_HOLD');
         }

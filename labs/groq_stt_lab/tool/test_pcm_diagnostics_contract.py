@@ -10,12 +10,27 @@ UI = (ROOT / "lib/main.dart").read_text(encoding="utf-8")
 
 class PublicPcmEvidenceTests(unittest.TestCase):
     def test_original_hard_window_gate_unchanged(self):
-        for token in ("frames > 0L", "frames >= expected - 320L",
+        for token in ("frames > 0L", "frames + leadingFrames >= expected - 320L",
                       "frames <= expected", "firstDecodedUs <= startUs",
                       "lastDecodedUs >= endUs - 25_000L"):
             self.assertIn(token, DECODER)
         self.assertIn("throw LabPcmWindowEvidence", DECODER)
         self.assertIn("if (!completed) output?.delete()", DECODER)
+
+    def test_bound_first_pts_without_fabricated_pcm(self):
+        for token in (
+            "val rawPts = info.presentationTimeUs",
+            "val pts = rawPts - leadingUs",
+            "leadingUs in 0L..50_000L",
+            "firstDecodedPtsUs",
+            "lastDecodedPtsUs",
+            "leadingPtsCompensationUs",
+            "MAX_GAP_US",
+            "if (!completed) output?.delete()",
+        ):
+            self.assertIn(token, DECODER)
+        dart = (ROOT / "lib/lab_audio_pipeline.dart").read_text()
+        self.assertIn("LabNativePcmCoverage.accepts(", dart)
 
     def test_only_allowlisted_numeric_metrics_exposed(self):
         keys = ("expected_frames", "decoded_frames", "first_pts_us",

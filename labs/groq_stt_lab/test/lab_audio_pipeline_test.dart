@@ -105,6 +105,8 @@ void main() {
           'mime':'audio/wav','codec':'audio/pcm','sampleRate':16000,
           'channels':1,'bitsPerSample':16,'decoderVerified':true,
           'providerUploadAuthorized':false,'outputFrames':192000,
+          'firstDecodedPtsUs':0,'lastDecodedPtsUs':12000000,
+          'leadingPtsCompensationUs':0,
         };
       }
       throw StateError('UNEXPECTED_NATIVE_METHOD');
@@ -156,6 +158,8 @@ void main() {
           'mime':'audio/wav','codec':'audio/pcm','sampleRate':16000,
           'channels':1,'bitsPerSample':16,'decoderVerified':true,
           'providerUploadAuthorized':false,'outputFrames':192000,
+          'firstDecodedPtsUs':0,'lastDecodedPtsUs':12000000,
+          'leadingPtsCompensationUs':0,
         };
       }
       throw StateError('UNEXPECTED_NATIVE_METHOD');
@@ -220,6 +224,32 @@ void main() {
       LabAudioPipeline.verifyPcm16Wave(file, actualBytes),
       throwsStateError,
     );
+  });
+
+  test('native MP3 AAC leading PTS and failure guards', () {
+    bool ok({required int frames, required int first, required int last,
+        required int end, required int origin, int start = 0}) =>
+        LabNativePcmCoverage.accepts(
+          outputFrames: frames,
+          expectedFrames: (end - start) * 16 ~/ 1000,
+          wireStartUs: start, wireEndUs: end,
+          firstDecodedPtsUs: first, lastDecodedPtsUs: last,
+          leadingPtsCompensationUs: origin);
+    // Owner v21 MP3 and M4A raw PTS, with physical frame-count models.
+    expect(ok(frames: 240100, first: 40249, last: 15046507,
+        end: 15046000, origin: 40249), isTrue);
+    expect(ok(frames: 239629, first: 23219, last: 15000067,
+        end: 15000000, origin: 23219), isTrue);
+    expect(ok(frames: 239000, first: 23219, last: 15000067,
+        end: 15000000, origin: 23219), isFalse);
+    expect(ok(frames: 239629, first: 60000, last: 15000067,
+        end: 15000000, origin: 60000), isFalse);
+    expect(ok(frames: 239629, first: 23219, last: 15000067,
+        end: 15000000, origin: 0), isFalse);
+    expect(ok(frames: 239629, first: 23219, last: 14900000,
+        end: 15000000, origin: 23219), isFalse);
+    expect(ok(frames: 80000, first: 5010000, last: 10000000,
+        start: 5000000, end: 10000000, origin: 0), isFalse);
   });
 
   test('long compressed files use contiguous 600s cores and 2s overlap', () {
