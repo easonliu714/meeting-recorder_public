@@ -1,0 +1,5 @@
+# Lab-local analyzer rules: no generated template dependency required.
+analyzer:
+  errors:
+    unused_import: warning
+    dead_code: warning
