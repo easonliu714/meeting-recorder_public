@@ -118,6 +118,255 @@ final class LabStagedChunk {
   final int wireEndMs;
 }
 
+/// Independent physical clock audit: no gap and exactly 2 seconds overlap.
+final class LabCompressedChunkChain {
+  const LabCompressedChunkChain._();
+  static void verify(List<LabStagedChunk> chunks, int durationMs) {
+    if (chunks.isEmpty || durationMs < 10 ||
+        chunks.length > LabCompressedWindowPlanner.maxWindows) {
+      throw StateError('LAB_AUDIO_CHAIN_CLOCK_HOLD');
+    }
+    var last = 0;
+    for (var i = 0; i < chunks.length; i++) {
+      final c = chunks[i];
+      final expectedWire = i == 0 ? 0 : last - LabCompressedWindowPlanner.overlapMs;
+      if (c.coreStartMs != last || c.coreEndMs <= last ||
+          c.wireStartMs != expectedWire || c.wireEndMs != c.coreEndMs ||
+          c.byteCount < 45 || c.byteCount >= 22500000 ||
+          !RegExp(r'^[0-9a-f]{64}
+final class LabAudioPipeline {
+  const LabAudioPipeline({
+    MethodChannel channel = const MethodChannel('groq_stt_lab/offline_audio'),
+  }) : _channel = channel;
+
+  final MethodChannel _channel;
+  static final _hex64 = RegExp(r'^[0-9a-f]{64}$');
+
+  static Future<String> digest(File file) async =>
+      (await sha256.bind(file.openRead()).first).toString();
+
+  Future<LabAudioProbe> probe(File source) async {
+    if (!await source.exists() || await source.length() <= 0) {
+      throw StateError('LAB_AUDIO_EMPTY_OR_MISSING_SOURCE');
+    }
+    final read = await source.open(mode: FileMode.read);
+    late final List<int> prefix;
+    try {
+      prefix = await read.read(12);
+    } finally {
+      await read.close();
+    }
+    if (prefix.length == 12 &&
+        String.fromCharCodes(prefix.sublist(0, 4)) == 'RIFF' &&
+        String.fromCharCodes(prefix.sublist(8, 12)) == 'WAVE') {
+      return const LabAudioProbe(
+          LabAudioKind.wavPcm16, 'audio/wav', null);
+    }
+    final meta = await _channel.invokeMapMethod<String, dynamic>(
+      'inspectAudio', {'sourcePath': source.path});
+    if (meta == null || meta['durationUs'] is! int ||
+        meta['sourceBytes'] != await source.length()) {
+      throw StateError('LAB_AUDIO_PROBE_METADATA_HOLD');
+    }
+    final codec = meta['mime'];
+    final int durationUs = meta['durationUs'] as int;
+    if (codec != 'audio/mpeg' && codec != 'audio/mp4a-latm') {
+      throw StateError('LAB_AUDIO_UNSUPPORTED_CODEC');
+    }
+    LabCompressedWindowPlanner.plan(durationUs);
+    return LabAudioProbe(
+        codec == 'audio/mpeg' ? LabAudioKind.mp3 : LabAudioKind.aacM4a,
+        codec as String, durationUs);
+  }
+
+  static Future<void> verifyPcm16Wave(File file, int expectedBytes) async {
+    final reader = await file.open(mode: FileMode.read);
+    try {
+      final header = await reader.read(44);
+      if (header.length != 44 ||
+          ascii.decode(header.sublist(0, 4)) != 'RIFF' ||
+          ascii.decode(header.sublist(8, 12)) != 'WAVE' ||
+          ascii.decode(header.sublist(12, 16)) != 'fmt ' ||
+          ascii.decode(header.sublist(36, 40)) != 'data') {
+        throw StateError('LAB_NATIVE_INVALID_WAV_HEADER');
+      }
+      final v = ByteData.sublistView(Uint8List.fromList(header));
+      if (v.getUint32(4, Endian.little) != expectedBytes - 8 ||
+          v.getUint32(16, Endian.little) != 16 ||
+          v.getUint16(20, Endian.little) != 1 ||
+          v.getUint16(22, Endian.little) != 1 ||
+          v.getUint32(24, Endian.little) != 16000 ||
+          v.getUint32(28, Endian.little) != 32000 ||
+          v.getUint16(32, Endian.little) != 2 ||
+          v.getUint16(34, Endian.little) != 16 ||
+          v.getUint32(40, Endian.little) != expectedBytes - 44) {
+        throw StateError('LAB_NATIVE_INVALID_PCM16_LAYOUT');
+      }
+    } finally {
+      await reader.close();
+    }
+  }
+
+  Future<List<LabStagedChunk>> stage({
+    required File source,
+    required LabAudioProbe probe,
+    required String sourceSha,
+    required Directory wavOutputRoot,
+    required Directory nativeCacheRoot,
+  }) async {
+    if (!_hex64.hasMatch(sourceSha) ||
+        await digest(source) != sourceSha) {
+      throw StateError('LAB_SOURCE_CHANGED_BEFORE_STAGE');
+    }
+    final result = <LabStagedChunk>[];
+    try {
+    if (probe.kind == LabAudioKind.wavPcm16) {
+      // FilePicker's selected source normally lives under Android cache/.
+      // Stage WAV chunks under the separate appSupport/lab_wav_outputs root,
+      // never within the same parent cache to avoid SOURCE_IN_CACHE.
+      final parts = await GroqWavPcmSplitter.stage(
+          source: source, cacheRoot: wavOutputRoot);
+      for (final part in parts) {
+        final bytes = await part.file.length();
+        if (bytes < 45 || bytes >= 22500000) {
+          throw StateError('LAB_WAV_OUTPUT_BYTES_HOLD');
+        }
+        result.add(LabStagedChunk(
+          file: part.file,
+          byteCount: bytes,
+          sha256Hex: await digest(part.file),
+          coreStartMs: part.coreStartMs,
+          coreEndMs: part.coreEndMs,
+          wireStartMs: part.wireStartMs,
+          wireEndMs: part.wireEndMs,
+        ));
+      }
+    } else {
+      // A compressed probe must carry an explicit, bounded source clock.
+      // Do not allow a missing or inconsistent native provenance to be
+      // treated as a valid decoded PCM upload candidate.
+      final durationUs = probe.durationUs;
+      if (durationUs == null ||
+          (probe.kind == LabAudioKind.mp3 && probe.mime != 'audio/mpeg') ||
+          (probe.kind == LabAudioKind.aacM4a &&
+              probe.mime != 'audio/mp4a-latm')) {
+        throw StateError('LAB_COMPRESSED_PROBE_CONTRACT_HOLD');
+      }
+      final windows = LabCompressedWindowPlanner.plan(durationUs);
+      final sourceBytes = await source.length();
+      final allowedDir = Directory(
+          '${nativeCacheRoot.path}${Platform.pathSeparator}groq_lab_native_pcm');
+      // Android native creates this output directory only after validating
+      // cache scope, available storage and the encoded source.
+      for (final w in windows) {
+        final meta = await _channel.invokeMapMethod<String, dynamic>(
+          'decodeAudioWindow', {
+            'sourcePath': source.path,
+            'startMs': w.wireStartMs,
+            'endMs': w.wireEndMs,
+          },
+        );
+        if (meta == null || meta['outputPath'] is! String ||
+            meta['bytes'] is! int || meta['wireSha256'] is! String ||
+            meta['sourceSha256'] != sourceSha ||
+            // Both the inspected source clock and source byte extent must
+            // agree with each physical window's native decode receipt.
+            // The SHA alone does not bind a reused/forged duration record.
+            meta['sourceDurationUs'] != durationUs ||
+            meta['sourceBytes'] != sourceBytes ||
+            meta['requestedStartUs'] != w.wireStartMs * 1000 ||
+            meta['requestedEndUs'] != w.wireEndMs * 1000 ||
+            // These are explicitly NOT acoustic or Owner playback proof.
+            meta['acousticTimingVerified'] != false ||
+            meta['ownerPlaybackVerified'] != false ||
+            meta['mime'] != 'audio/wav' ||
+            meta['codec'] != 'audio/pcm' ||
+            meta['sampleRate'] != 16000 ||
+            meta['channels'] != 1 ||
+            meta['bitsPerSample'] != 16 ||
+            meta['decoderVerified'] != true ||
+            meta['providerUploadAuthorized'] != false ||
+            meta['firstDecodedPtsUs'] is! int ||
+            meta['lastDecodedPtsUs'] is! int ||
+            meta['leadingPtsCompensationUs'] is! int ||
+            !_hex64.hasMatch(meta['wireSha256'] as String)) {
+          throw StateError('LAB_NATIVE_OUTPUT_CONTRACT_HOLD');
+        }
+        final staged = File(meta['outputPath'] as String);
+        final physicalParent = await staged.parent.resolveSymbolicLinks();
+        final physicalDir = await allowedDir.resolveSymbolicLinks();
+        final bytes = meta['bytes'] as int;
+        if (physicalParent != physicalDir ||
+            await staged.length() != bytes ||
+            bytes < 45 || bytes >= 22500000 ||
+            await digest(staged) != meta['wireSha256']) {
+          throw StateError('LAB_NATIVE_OUTPUT_SHA_SCOPE_HOLD');
+        }
+        await verifyPcm16Wave(staged, bytes);
+        final frames = meta['outputFrames'];
+        final expectedFrames = (w.wireEndMs - w.wireStartMs) * 16;
+        if (frames is! int ||
+            !LabNativePcmCoverage.accepts(
+              outputFrames: frames,
+              expectedFrames: expectedFrames,
+              wireStartUs: w.wireStartMs * 1000,
+              wireEndUs: w.wireEndMs * 1000,
+              firstDecodedPtsUs: meta['firstDecodedPtsUs'] as int,
+              lastDecodedPtsUs: meta['lastDecodedPtsUs'] as int,
+              leadingPtsCompensationUs: meta['leadingPtsCompensationUs'] as int,
+            ) ||
+            bytes != 44 + frames * 2) {
+          throw StateError('LAB_NATIVE_INCOMPLETE_AUDIO_WINDOW_HOLD');
+        }
+        result.add(LabStagedChunk(
+          file: staged,
+          byteCount: bytes,
+          sha256Hex: meta['wireSha256'] as String,
+          coreStartMs: w.coreStartMs,
+          coreEndMs: w.coreEndMs,
+          wireStartMs: w.wireStartMs,
+          wireEndMs: w.wireEndMs,
+        ));
+      }
+    }
+    if (probe.kind != LabAudioKind.wavPcm16) {
+      final durationUs = probe.durationUs;
+      if (durationUs == null) throw StateError('LAB_COMPRESSED_PROBE_CONTRACT_HOLD');
+      LabCompressedChunkChain.verify(result, durationUs ~/ 1000);
+    }
+    if (await digest(source) != sourceSha) {
+      throw StateError('LAB_SOURCE_CHANGED_AFTER_STAGE');
+    }
+    return List.unmodifiable(result);
+    } catch (_) {
+      // Only remove previously verified *temporary* PCM wires from this stage.
+      // Never remove original audio, saved Raw, Notes or user preferences.
+      if (probe.kind != LabAudioKind.wavPcm16) {
+        final safeRoot = Directory(
+          '${nativeCacheRoot.path}${Platform.pathSeparator}groq_lab_native_pcm');
+        for (final c in result) {
+          try {
+            if (await c.file.exists() &&
+                await c.file.parent.resolveSymbolicLinks() ==
+                    await safeRoot.resolveSymbolicLinks()) {
+              await c.file.delete();
+            }
+          } catch (_) { /* Preserve the initial stage exception. */ }
+        }
+      }
+      rethrow;
+    }
+  }
+}
+).hasMatch(c.sha256Hex)) {
+        throw StateError('LAB_AUDIO_CHAIN_CLOCK_HOLD');
+      }
+      last = c.coreEndMs;
+    }
+    if (last != durationMs) throw StateError('LAB_AUDIO_CHAIN_CLOCK_HOLD');
+  }
+}
+
 /// Lab-only local source probe & physical audio stage. Nothing transmits bytes.
 final class LabAudioPipeline {
   const LabAudioPipeline({

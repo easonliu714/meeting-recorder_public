@@ -5,10 +5,10 @@ cd "$(dirname "$0")/.."
 # v0.3's launch package mismatch is a blocking regression contract.
 python3 -m unittest discover -s tool -p 'test_native_identity.py' -v
 flutter create --no-pub --platforms=android --project-name=groq_stt_lab \
-  --org=com.example.meeting_recorder.public_lab_v22 .
+  --org=com.example.meeting_recorder.public_lab_v23 .
 python3 - <<'PY'
 from pathlib import Path
-native = Path("android/app/src/main/kotlin/com/example/meeting_recorder/public_lab_v22/groq_stt_lab")
+native = Path("android/app/src/main/kotlin/com/example/meeting_recorder/public_lab_v23/groq_stt_lab")
 native.mkdir(parents=True, exist_ok=True)
 for name in ("MainActivity.kt", "GroqLabAudioDecoder.kt"):
     source = Path("native") / name

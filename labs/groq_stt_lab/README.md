@@ -12,6 +12,15 @@ This is a **separate Lab-only application**, not the Meeting Recorder public mai
 - No recordings, transcripts, API credentials, private signing files, build histories, user logs, archived binaries or unreviewed Main source are copied into this branch.
 - Publishing source does not itself assert the right to redistribute third-party components under a new license; respect original dependency licenses. No new open-source license is granted by this snapshot.
 
+## v0.4.18+23 — LAB-1 compressed physical multi-window checkpoint
+This update checks each physical MP3/M4A PCM16 output for continuous
+core time and 2-second wire overlap, then fails closed on gaps or
+incomplete output. If a later decode fails, verified temporary PCM
+from earlier windows in the same stage is removed, without touching
+source, Raw, Notes or preferences. A real >10-minute Owner Android
+test is still required before multi-window Owner PASS.
+The earlier v22 short-file results are preserved unchanged.
+
 ## v0.4.17+22 — bounded MP3/AAC leading-PTS recovery
 
 Owner v21 real-device Log recorded MP3 40249us and AAC/M4A 23219us
@@ -39,7 +48,7 @@ flutter pub get
 flutter analyze
 flutter test
 (cd android && ./gradlew :app:compileDebugKotlin --no-daemon)
-flutter build apk --debug --no-pub --build-name=0.4.17 --build-number=22
+flutter build apk --debug --no-pub --build-name=0.4.18 --build-number=23
 ```
 
 No API key or provider call is required for local or CI testing.

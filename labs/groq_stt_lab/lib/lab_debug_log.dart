@@ -8,9 +8,9 @@ import 'package:share_plus/share_plus.dart';
 /// Stable build identity shown to Owner and embedded in every exported log.
 final class LabBuildInfo {
   const LabBuildInfo._();
-  static const versionName = '0.4.16';
-  static const versionCode = 21;
-  static const applicationId = 'com.example.meeting_recorder.public_lab_v21.groq_stt_lab';
+  static const versionName = '0.4.18';
+  static const versionCode = 23;
+  static const applicationId = 'com.example.meeting_recorder.public_lab_v23.groq_stt_lab';
   static const sourceSha = String.fromEnvironment('LAB_BUILD_SHA', defaultValue: 'UNPINNED_LOCAL');
   static String get display => 'v$versionName+$versionCode / ${sourceSha.length > 12 ? sourceSha.substring(0, 12) : sourceSha}';
 }
@@ -75,9 +75,9 @@ final class LabDebugJournal {
     final dir = Directory('${root.path}${Platform.pathSeparator}groq_lab_debug_exports');
     await dir.create(recursive: true);
     final stamp = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final output = File('${dir.path}${Platform.pathSeparator}groq_lab_v0_4_16_build21_$stamp.log');
+    final output = File('${dir.path}${Platform.pathSeparator}groq_lab_v0_4_18_build23_$stamp.log');
     await output.writeAsString(snapshot(), encoding: utf8, flush: true);
     await Share.shareXFiles([XFile(output.path, mimeType: 'text/plain')],
-        subject: 'Groq Lab v0.4.16+20 diagnostic log');
+        subject: 'Groq Lab v0.4.18+23 diagnostic log');
   }
 }

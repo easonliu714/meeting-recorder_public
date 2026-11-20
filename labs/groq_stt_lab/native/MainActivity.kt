@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v22.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v23.groq_stt_lab
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine

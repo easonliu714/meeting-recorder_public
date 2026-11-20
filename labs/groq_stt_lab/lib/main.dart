@@ -63,7 +63,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.17+22', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.18+23', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -174,6 +174,13 @@ class _GroqLabHomeState extends State<GroqLabHome> {
           'wire_start_ms': chunk.wireStartMs,
           'wire_end_ms': chunk.wireEndMs,
           'sha12': chunk.sha256Hex.substring(0, 12),
+        });
+      }
+      if (staged.length > 1) {
+        _debug.record('STAGE_MULTIWINDOW_OK', {
+          'chunks': staged.length,
+          'overlap_ms': 2000,
+          'final_core_end_ms': staged.last.coreEndMs,
         });
       }
       _debug.record('STAGE_DONE',
