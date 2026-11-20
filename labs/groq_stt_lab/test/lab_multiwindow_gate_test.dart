@@ -92,6 +92,7 @@ void main() {
     }
     var index = 0;
     var failSecond = false;
+    var forgedFirstReplay = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'inspectAudio') {
@@ -121,6 +122,7 @@ void main() {
         'mime': 'audio/wav', 'codec': 'audio/pcm', 'sampleRate': 16000,
         'channels': 1, 'bitsPerSample': 16, 'decoderVerified': true,
         'providerUploadAuthorized': false,
+        'mp3OriginReplay': forgedFirstReplay || i == 1,
         'outputFrames': (w.wireEndMs - w.wireStartMs) * 16,
         'firstDecodedPtsUs': w.wireStartMs * 1000,
         'lastDecodedPtsUs': w.wireEndMs * 1000,
@@ -136,6 +138,8 @@ void main() {
     );
     final actual = await stage();
     expect(actual, hasLength(2));
+    expect(actual[0].mp3OriginReplay, isFalse);
+    expect(actual[1].mp3OriginReplay, isTrue);
     expect(actual[1].coreStartMs, actual[0].coreEndMs);
     expect(actual[0].coreEndMs - actual[1].wireStartMs, 2000);
     expect(actual.last.coreEndMs, 601000);
@@ -153,6 +157,20 @@ void main() {
     expect(await retry.exists(), isFalse);
     expect(await outputs[1].exists(), isTrue);
     expect(await source.readAsBytes(), original);
+    expect(await LabAudioPipeline.digest(source), sourceSha);
+
+    // An origin-replay claim on the first window is never accepted as
+    // verified physical PCM provenance, even if bytes/SHA appear valid.
+    await writePcm(retry, (windows[0].wireEndMs - windows[0].wireStartMs) * 16);
+    digests[0] = await LabAudioPipeline.digest(retry);
+    index = 0;
+    failSecond = false;
+    forgedFirstReplay = true;
+    await expectLater(
+      stage(),
+      throwsA(isA<StateError>().having(
+        (e) => e.message, 'code', 'LAB_NATIVE_OUTPUT_CONTRACT_HOLD')),
+    );
     expect(await LabAudioPipeline.digest(source), sourceSha);
   });
 }

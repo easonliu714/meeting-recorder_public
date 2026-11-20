@@ -108,6 +108,7 @@ final class LabStagedChunk {
     required this.coreEndMs,
     required this.wireStartMs,
     required this.wireEndMs,
+    this.mp3OriginReplay = false,
   });
   final File file;
   final int byteCount;
@@ -116,6 +117,8 @@ final class LabStagedChunk {
   final int coreEndMs;
   final int wireStartMs;
   final int wireEndMs;
+  /// Verified on-device PCM reconstruction using bounded origin seek; not STT.
+  final bool mp3OriginReplay;
 }
 
 /// Independent physical clock audit: continuous cores, 2s wire overlap.
@@ -300,6 +303,13 @@ final class LabAudioPipeline {
             meta['firstDecodedPtsUs'] is! int ||
             meta['lastDecodedPtsUs'] is! int ||
             meta['leadingPtsCompensationUs'] is! int ||
+            // Do not trust a declared native origin replay on wrong codec
+            // or a first/oversized window; physical SHA/PCM still mandatory.
+            (meta['mp3OriginReplay'] != null &&
+                meta['mp3OriginReplay'] is! bool) ||
+            (meta['mp3OriginReplay'] == true &&
+                (probe.kind != LabAudioKind.mp3 ||
+                    w.wireStartMs == 0 || w.wireEndMs > 900000)) ||
             !_hex64.hasMatch(meta['wireSha256'] as String)) {
           throw StateError('LAB_NATIVE_OUTPUT_CONTRACT_HOLD');
         }
@@ -337,6 +347,7 @@ final class LabAudioPipeline {
           coreEndMs: w.coreEndMs,
           wireStartMs: w.wireStartMs,
           wireEndMs: w.wireEndMs,
+          mp3OriginReplay: meta['mp3OriginReplay'] == true,
         ));
       }
     }

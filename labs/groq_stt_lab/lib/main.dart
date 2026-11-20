@@ -63,7 +63,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.18+23', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.19+24', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -166,6 +166,12 @@ class _GroqLabHomeState extends State<GroqLabHome> {
       if (!mounted) return;
       for (var i = 0; i < staged.length; i++) {
         final chunk = staged[i];
+        if (chunk.mp3OriginReplay) {
+          _debug.record('STAGE_MP3_ORIGIN_REPLAY_OK', {
+            'index': i + 1,
+            'origin_ms': 0,
+          });
+        }
         _debug.record('STAGE_CHUNK_OK', {
           'index': i + 1,
           'bytes': chunk.byteCount,
@@ -200,7 +206,9 @@ class _GroqLabHomeState extends State<GroqLabHome> {
         for (final key in const [
           'expected_frames', 'decoded_frames', 'first_pts_us',
           'last_pts_us', 'window_start_us', 'window_end_us',
-          'source_duration_us',
+          'source_duration_us', 'last_input_pts_us',
+          'input_packets_queued', 'input_eos_queued', 'output_eos_seen',
+          'mp3_origin_replay_attempted',
         ]) {
           final value = details[key];
           if (value is int && value >= -1 && value <= 172800000000) {

@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v23.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v24.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -31,6 +31,29 @@ internal object GroqLabAudioDecoder {
     private const val MAX_WINDOW_US = 702_000_000L
     private const val MAX_GAP_US = 150_000L
     private const val MAX_INPUT_BYTES = 2 * 1024 * 1024
+    // A short MP3 seek may not return the full decoder tail on all devices.
+    // A replay from file offset 0 is allowed ONCE, ONLY for a bounded 15m
+    // nonfirst wire with an observed short tail, and still uses full PCM gates.
+    private const val MAX_REPLAY_END_MS = 15L * 60L * 1000L
+    private const val MAX_REPLAY_MISSING_FRAMES = 32_000L
+    private const val MAX_REPLAY_TAIL_GAP_US = 2_000_000L
+
+    private fun eligibleForOriginReplay(
+        metrics: Map<String, Long>, startMs: Long, endMs: Long
+    ): Boolean {
+        if (startMs <= 0L || endMs > MAX_REPLAY_END_MS || endMs <= startMs) return false
+        val expected = metrics["expected_frames"] ?: return false
+        val decoded = metrics["decoded_frames"] ?: return false
+        val first = metrics["first_pts_us"] ?: return false
+        val last = metrics["last_pts_us"] ?: return false
+        val startUs = startMs * 1000L
+        val endUs = endMs * 1000L
+        val missing = expected - decoded
+        return expected > 0L && decoded > 0L &&
+            missing in 321L..MAX_REPLAY_MISSING_FRAMES &&
+            first >= 0L && first <= startUs &&
+            last >= endUs - MAX_REPLAY_TAIL_GAP_US && last < endUs
+    }
 
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -124,6 +147,34 @@ internal object GroqLabAudioDecoder {
     fun decodeWindow(
         context: Context, sourcePath: String, startMs: Long, endMs: Long
     ): Map<String, Any> {
+        try {
+            return decodeWindowAttempt(context, sourcePath, startMs, endMs,
+                fromOrigin = false)
+        } catch (first: LabPcmWindowEvidence) {
+            if (!eligibleForOriginReplay(first.safeMetrics, startMs, endMs)) throw first
+            // MIME is sniffed by MediaExtractor, never extension or filename.
+            val actualMime = try {
+                inspectSource(sourcePath)["mime"]
+            } catch (_: Exception) {
+                null
+            }
+            if (actualMime != "audio/mpeg") throw first
+            return try {
+                // A single read-only local replay from origin. Never Groq retry.
+                decodeWindowAttempt(context, sourcePath, startMs, endMs,
+                    fromOrigin = true)
+            } catch (again: LabPcmWindowEvidence) {
+                // Report only bounded numeric evidence, not source paths or PCM.
+                throw LabPcmWindowEvidence(again.safeMetrics +
+                    ("mp3_origin_replay_attempted" to 1L))
+            }
+        }
+    }
+
+    private fun decodeWindowAttempt(
+        context: Context, sourcePath: String, startMs: Long, endMs: Long,
+        fromOrigin: Boolean
+    ): Map<String, Any> {
         require(startMs >= 0L && endMs > startMs && endMs <= Long.MAX_VALUE / 1000L) {
             "LAB_AUDIO_INVALID_WINDOW"
         }
@@ -192,7 +243,8 @@ internal object GroqLabAudioDecoder {
                 "LAB_AUDIO_UNSUPPORTED_CHANNELS_OR_RATE"
             }
             extractor.selectTrack(track)
-            extractor.seekTo(maxOf(0L, startUs - 1_000_000L),
+            extractor.seekTo(
+                if (fromOrigin) 0L else maxOf(0L, startUs - 1_000_000L),
                 MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             val active = MediaCodec.createDecoderByType(mime)
             codec = active
@@ -212,6 +264,8 @@ internal object GroqLabAudioDecoder {
             var rate = inputRate
             var channels = inputChannels
             var iterations = 0
+            var lastInputPtsUs = -1L
+            var inputPacketsQueued = 0L
             try {
                 file.setLength(0L)
                 file.write(ByteArray(44))
@@ -239,6 +293,8 @@ internal object GroqLabAudioDecoder {
                                     "LAB_AUDIO_INVALID_PACKET"
                                 }
                                 active.queueInputBuffer(index, 0, count, pts, 0)
+                                lastInputPtsUs = pts
+                                inputPacketsQueued++
                                 extractor.advance()
                             }
                         }
@@ -343,7 +399,11 @@ internal object GroqLabAudioDecoder {
                         "last_pts_us" to lastDecodedUs,
                         "window_start_us" to startUs,
                         "window_end_us" to endUs,
-                        "source_duration_us" to durationUs
+                        "source_duration_us" to durationUs,
+                        "last_input_pts_us" to lastInputPtsUs,
+                        "input_packets_queued" to inputPacketsQueued,
+                        "input_eos_queued" to if (inputEos) 1L else 0L,
+                        "output_eos_seen" to if (outputEos) 1L else 0L
                     ))
                 }
                 finishWav(file, frames)
@@ -380,7 +440,8 @@ internal object GroqLabAudioDecoder {
                 "decoderVerified" to true,
                 "acousticTimingVerified" to false,
                 "ownerPlaybackVerified" to false,
-                "providerUploadAuthorized" to false
+                "providerUploadAuthorized" to false,
+                "mp3OriginReplay" to fromOrigin
             )
         } finally {
             try { codec?.stop() } catch (_: Exception) { }

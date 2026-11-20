@@ -12,6 +12,20 @@ This is a **separate Lab-only application**, not the Meeting Recorder public mai
 - No recordings, transcripts, API credentials, private signing files, build histories, user logs, archived binaries or unreviewed Main source are copied into this branch.
 - Publishing source does not itself assert the right to redistribute third-party components under a new license; respect original dependency licenses. No new open-source license is granted by this snapshot.
 
+## v0.4.19+24 — LAB-1 MP3 second-window bounded local replay
+Owner v23 Android 12m MP3 T05 failed closed: final decoded PTS
+719363466us versus required 720039000us, 10808 PCM frames short.
+Source SHA and FFprobe full MP3 packet timeline remain independently valid.
+The MP3-only bounded noninitial-window recovery attempts one local
+MediaExtractor/MediaCodec replay from time zero if physical tail was
+short by 321..32000 frames and was otherwise within 2s of required end.
+Original no-loss, true PCM, PTS, SHA256, 22.5MB and temporary cleanup
+gates remain unchanged. AAC/M4A v23 T06 OWNER_PASS stays frozen.
+A successful local replay is logged as STAGE_MP3_ORIGIN_REPLAY_OK;
+a failed attempt reports bounded input/output EOS numeric evidence and
+stays HOLD. No Groq provider submission or fabricated silence.
+Owner Android retest T05 remains NOT_VERIFIED until real-device UAT.
+
 ## v0.4.18+23 — LAB-1 compressed physical multi-window checkpoint
 This update checks each physical MP3/M4A PCM16 output for continuous
 core time and 2-second wire overlap, then fails closed on gaps or
@@ -48,7 +62,7 @@ flutter pub get
 flutter analyze
 flutter test
 (cd android && ./gradlew :app:compileDebugKotlin --no-daemon)
-flutter build apk --debug --no-pub --build-name=0.4.18 --build-number=23
+flutter build apk --debug --no-pub --build-name=0.4.19 --build-number=24
 ```
 
 No API key or provider call is required for local or CI testing.
