@@ -157,7 +157,7 @@ jobs:
           {
             echo "REPO=easonliu714/meeting-recorder_public"
             echo "PUBLIC_BUILD_SHA=$GITHUB_SHA"
-            echo "VERSION=0.4.17+22"
+            echo "VERSION=0.4.18+23"
             echo "APPLICATION_ID=$EXPECTED_APP_ID"
             echo "APK_SHA256=$digest"
             echo "SIGNER_SHA256=$cert"
