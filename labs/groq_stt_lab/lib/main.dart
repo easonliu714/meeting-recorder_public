@@ -48,6 +48,8 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   String _status = '預設離線；真實 Groq STT 僅在逐段明確同意後呼叫。';
   List<LabStagedChunk> _chunks = const [];
   bool _busy = false;
+  bool _stagingAudio = false;
+  bool _cancelStagingRequested = false;
   LabSttRawPreview? _sttPreview;
   LabGroqMergedReview? _mergedReview;
   bool _previewIsMock = false;
@@ -63,7 +65,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.19+24', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.20+25', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -134,6 +136,16 @@ class _GroqLabHomeState extends State<GroqLabHome> {
     }
   }
 
+  void _requestStageCancellation() {
+    if (!_stagingAudio || _cancelStagingRequested) return;
+    setState(() {
+      _cancelStagingRequested = true;
+      _status = '已要求取消：目前正在處理的 Chunk 完成後將安全停止，'
+          '並回收本次暫存輸出。';
+    });
+    _debug.record('STAGE_CANCEL_REQUESTED');
+  }
+
   Future<void> _stageAudio() async {
     final input = _selectedSource;
     final sha = _originalSha;
@@ -141,6 +153,8 @@ class _GroqLabHomeState extends State<GroqLabHome> {
     if (_busy || input == null || sha == null || probe == null) return;
     setState(() {
       _busy = true;
+      _stagingAudio = true;
+      _cancelStagingRequested = false;
       _chunks = const [];
       _groqRawSavedCount = 0;
       _groqBlockedChunkOneBased = null;
@@ -162,6 +176,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
         wavOutputRoot: Directory(
             '${support.path}${Platform.pathSeparator}groq_lab_wav_chunks_v2'),
         nativeCacheRoot: temporary,
+        cancellationRequested: () => _cancelStagingRequested,
       );
       if (!mounted) return;
       for (var i = 0; i < staged.length; i++) {
@@ -220,10 +235,17 @@ class _GroqLabHomeState extends State<GroqLabHome> {
         }
       }
       final code = LabDebugJournal.failureCode(e);
-      _debug.record('STAGE_HOLD', {'code': code});
+      _debug.record(code == 'LAB_AUDIO_CANCELLED'
+          ? 'STAGE_CANCELLED' : 'STAGE_HOLD', {'code': code});
       if (mounted) setState(() => _status = '離線處理 HOLD：$code');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _stagingAudio = false;
+          _cancelStagingRequested = false;
+        });
+      }
     }
   }
 
@@ -464,6 +486,14 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                   ? null : _stageAudio,
               child: const Text('離線轉檔與切檔'),
             ),
+            if (_stagingAudio)
+              OutlinedButton.icon(
+                key: const Key('cancel-stage-audio'),
+                onPressed: _cancelStagingRequested
+                    ? null : _requestStageCancellation,
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('取消本次轉檔（當前 Chunk 完成後生效）'),
+              ),
             OutlinedButton.icon(
               key: const Key('export-debug-log'),
               onPressed: _busy ? null : _exportDebugLog,

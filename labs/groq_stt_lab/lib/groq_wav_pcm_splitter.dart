@@ -192,11 +192,15 @@ class GroqWavPcmSplitter {
     required Directory cacheRoot,
     int maxBytes = GroqWavBalancedCorePlanner.defaultWireBudget,
     int overlapSeconds = GroqWavBalancedCorePlanner.overlapSeconds,
+    bool Function()? cancellationRequested,
   }) async {
     if (maxBytes < 65536 ||
         maxBytes > GroqWavBalancedCorePlanner.strictWireCeiling ||
         overlapSeconds != 2) {
       throw StateError('INVALID_BYTE_OVERLAP_POLICY');
+    }
+    if (cancellationRequested?.call() == true) {
+      throw StateError('LAB_AUDIO_CANCELLED');
     }
     await cacheRoot.create(recursive: true);
     final original = await source.resolveSymbolicLinks();
@@ -217,6 +221,9 @@ class GroqWavPcmSplitter {
       owned = await cacheRoot.createTemp('groq_pcm_staged_');
       final result = <GroqWavPart>[];
       for (final window in plan.windows) {
+        if (cancellationRequested?.call() == true) {
+          throw StateError('LAB_AUDIO_CANCELLED');
+        }
         final bytes = (window.coreEndFrame - window.wireStartFrame) * p.align;
         if (bytes + 44 != window.wireBytes ||
             bytes + 44 >= maxBytes ||
@@ -230,6 +237,9 @@ class GroqWavPcmSplitter {
           await reader.setPosition(p.offset + window.wireStartFrame * p.align);
           var remaining = bytes;
           while (remaining > 0) {
+            if (cancellationRequested?.call() == true) {
+              throw StateError('LAB_AUDIO_CANCELLED');
+            }
             final chunk = await reader.read(math.min(32768, remaining));
             if (chunk.isEmpty) throw StateError('TRUNCATED_SOURCE');
             await writer.writeFrom(chunk);
@@ -247,6 +257,9 @@ class GroqWavPcmSplitter {
       }
       // Fail closed on physical clock/header/size drift. Existing catch
       // cleans only this invocation's new temporary Chunk directory.
+      if (cancellationRequested?.call() == true) {
+        throw StateError('LAB_AUDIO_CANCELLED');
+      }
       await verifyPhysicalStage(
         parts: result,
         expectedTotalFrames: p.size ~/ p.align,

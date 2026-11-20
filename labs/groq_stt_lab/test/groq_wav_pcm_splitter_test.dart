@@ -301,4 +301,25 @@ void main() {
       GroqWavPcmSplitter.stage(source: outside, cacheRoot: cache,
         maxBytes: 22500001), throwsStateError);
   });
+
+  test('user cancel mid-WAV copy removes only fresh temporary output', () async {
+    final source = File('${root.path}/owner_reference.wav');
+    final original = wav16(rate: 8000, seconds: 16);
+    await source.writeAsBytes(original);
+    final outputRoot = Directory('${root.path}/staging');
+    var observed = 0;
+    await expectLater(
+      GroqWavPcmSplitter.stage(
+        source: source,
+        cacheRoot: outputRoot,
+        cancellationRequested: () => ++observed > 6,
+      ),
+      throwsA(isA<StateError>().having(
+          (e) => e.message, 'code', 'LAB_AUDIO_CANCELLED')),
+    );
+    expect(observed, greaterThan(6));
+    expect(await source.readAsBytes(), original);
+    expect(await outputRoot.exists(), isTrue);
+    expect(await outputRoot.list().isEmpty, isTrue);
+  });
 }

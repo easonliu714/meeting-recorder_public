@@ -9,7 +9,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-EXPECTED_PACKAGE = "com.example.meeting_recorder.public_lab_v24.groq_stt_lab"
+EXPECTED_PACKAGE = "com.example.meeting_recorder.public_lab_v25.groq_stt_lab"
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 
 

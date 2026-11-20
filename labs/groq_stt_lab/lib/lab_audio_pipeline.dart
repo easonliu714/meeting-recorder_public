@@ -156,6 +156,44 @@ final class LabAudioPipeline {
   final MethodChannel _channel;
   static final _hex64 = RegExp(r'^[0-9a-f]{64}$');
 
+  /// Roll back only this invocation's completed WAV files, each restricted
+  /// to a uniquely minted directory under the app-managed WAV stage root.
+  /// Do not follow symlinks or recursively delete unknown data.
+  static Future<void> rollbackVerifiedWavStage(
+      List<LabStagedChunk> completed, Directory ownedRoot) async {
+    if (completed.isEmpty || !await ownedRoot.exists()) return;
+    final root = await ownedRoot.resolveSymbolicLinks();
+    final parents = <String, Directory>{};
+    for (final chunk in completed) {
+      try {
+        if (!await chunk.file.exists()) continue;
+        final parent = chunk.file.parent;
+        final name = chunk.file.uri.pathSegments.last;
+        if (!RegExp(r'^pcm_[0-9]+[.]wav$').hasMatch(name)) continue;
+        final resolved = await parent.resolveSymbolicLinks();
+        if (!resolved.startsWith(
+                '$root${Platform.pathSeparator}groq_pcm_staged_') ||
+            await chunk.file.resolveSymbolicLinks() !=
+                '$resolved${Platform.pathSeparator}$name') {
+          continue;
+        }
+        await chunk.file.delete();
+        parents[resolved] = parent;
+      } catch (_) {
+        // Retain original stage error, never broaden cleanup scope.
+      }
+    }
+    for (final parent in parents.values) {
+      try {
+        if (await parent.exists() && await parent.list().isEmpty) {
+          await parent.delete();
+        }
+      } catch (_) {
+        // Unexpected data must remain untouched.
+      }
+    }
+  }
+
   static Future<String> digest(File file) async =>
       (await sha256.bind(file.openRead()).first).toString();
 
@@ -227,19 +265,27 @@ final class LabAudioPipeline {
     required String sourceSha,
     required Directory wavOutputRoot,
     required Directory nativeCacheRoot,
+    bool Function()? cancellationRequested,
   }) async {
+    void checkCancelled() {
+      if (cancellationRequested?.call() == true) {
+        throw StateError('LAB_AUDIO_CANCELLED');
+      }
+    }
     if (!_hex64.hasMatch(sourceSha) ||
         await digest(source) != sourceSha) {
       throw StateError('LAB_SOURCE_CHANGED_BEFORE_STAGE');
     }
     final result = <LabStagedChunk>[];
     try {
+    checkCancelled();
     if (probe.kind == LabAudioKind.wavPcm16) {
       // FilePicker's selected source normally lives under Android cache/.
       // Stage WAV chunks under the separate appSupport/lab_wav_outputs root,
       // never within the same parent cache to avoid SOURCE_IN_CACHE.
       final parts = await GroqWavPcmSplitter.stage(
-          source: source, cacheRoot: wavOutputRoot);
+          source: source, cacheRoot: wavOutputRoot,
+          cancellationRequested: cancellationRequested);
       for (final part in parts) {
         final bytes = await part.file.length();
         if (bytes < 45 || bytes >= 22500000) {
@@ -273,6 +319,7 @@ final class LabAudioPipeline {
       // Android native creates this output directory only after validating
       // cache scope, available storage and the encoded source.
       for (final w in windows) {
+        checkCancelled();
         final meta = await _channel.invokeMapMethod<String, dynamic>(
           'decodeAudioWindow', {
             'sourcePath': source.path,
@@ -351,6 +398,7 @@ final class LabAudioPipeline {
         ));
       }
     }
+    checkCancelled();
     if (probe.kind != LabAudioKind.wavPcm16) {
       final durationUs = probe.durationUs;
       if (durationUs == null) {
@@ -363,9 +411,11 @@ final class LabAudioPipeline {
     }
     return List.unmodifiable(result);
     } catch (_) {
-      // Roll back only verified temporary native PCM outputs created here.
-      // Never delete source recordings, saved Raw, Notes or preferences.
-      if (probe.kind != LabAudioKind.wavPcm16) {
+      // Atomic on failure: only this stage's verified temporary outputs.
+      // Never delete original recording, Raw, Notes or saved preferences.
+      if (probe.kind == LabAudioKind.wavPcm16) {
+        await rollbackVerifiedWavStage(result, wavOutputRoot);
+      } else {
         final safeRoot = Directory(
           '${nativeCacheRoot.path}${Platform.pathSeparator}groq_lab_native_pcm');
         for (final c in result) {

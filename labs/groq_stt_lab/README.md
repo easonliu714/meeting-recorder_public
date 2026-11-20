@@ -12,6 +12,21 @@ This is a **separate Lab-only application**, not the Meeting Recorder public mai
 - No recordings, transcripts, API credentials, private signing files, build histories, user logs, archived binaries or unreviewed Main source are copied into this branch.
 - Publishing source does not itself assert the right to redistribute third-party components under a new license; respect original dependency licenses. No new open-source license is granted by this snapshot.
 
+## v0.4.20+25 — LAB-1 user-cancellable 1–2h staging and failure-safe WAV cleanup
+The isolated Public Lab adds a cancel button while WAV/MP3/M4A staging.
+WAV cancellation is checked between every 32 KiB read/write; its
+splitter deletes only the new temporary directory if interrupted.
+Compressed cancellation takes effect between completed native PCM
+windows, not inside an active MediaCodec decode call; already verified
+temporary outputs from this invocation are rolled back fail-closed.
+If WAV output finished but final source SHA/cancellation verification
+fails, only verified freshly produced app-owned WAV files are removed,
+never source audio, Provider Raw, Notes or saved user preferences.
+No Groq requests, silent PCM padding or relaxed PTS/PCM/SHA checks.
+New positive/negative tests cover WAV copy interruption, physical
+two-window cancel-before-next-window, and cross-root cleanup protection.
+A real 1–2h Android test is NOT_VERIFIED until Owner executes it.
+
 ## v0.4.19+24 — LAB-1 MP3 second-window bounded local replay
 Owner v23 Android 12m MP3 T05 failed closed: final decoded PTS
 719363466us versus required 720039000us, 10808 PCM frames short.
@@ -62,7 +77,7 @@ flutter pub get
 flutter analyze
 flutter test
 (cd android && ./gradlew :app:compileDebugKotlin --no-daemon)
-flutter build apk --debug --no-pub --build-name=0.4.19 --build-number=24
+flutter build apk --debug --no-pub --build-name=0.4.20 --build-number=25
 ```
 
 No API key or provider call is required for local or CI testing.

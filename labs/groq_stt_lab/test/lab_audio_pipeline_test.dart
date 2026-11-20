@@ -268,4 +268,34 @@ void main() {
     expect(() => LabCompressedWindowPlanner.plan(2000),
         throwsStateError);
   });
+
+  test('late WAV stage rollback deletes only owned completed temporary wires',
+      () async {
+    final ownedRoot = Directory('${root.path}/app_support_wav');
+    await ownedRoot.create(recursive: true);
+    final staged = await ownedRoot.createTemp('groq_pcm_staged_');
+    final wire = File('${staged.path}/pcm_0.wav');
+    await wire.writeAsBytes(testWav());
+    final external = File('${root.path}/source_keep.wav');
+    final sourceBytes = testWav(seconds: 12);
+    await external.writeAsBytes(sourceBytes);
+    final forbidden = File('${root.path}/pcm_1.wav');
+    await forbidden.writeAsBytes(sourceBytes);
+    final chunks = [
+      LabStagedChunk(file: wire, byteCount: await wire.length(),
+        sha256Hex: await LabAudioPipeline.digest(wire),
+        coreStartMs: 0, coreEndMs: 8000,
+        wireStartMs: 0, wireEndMs: 8000),
+      LabStagedChunk(file: forbidden, byteCount: await forbidden.length(),
+        sha256Hex: await LabAudioPipeline.digest(forbidden),
+        coreStartMs: 8000, coreEndMs: 12000,
+        wireStartMs: 6000, wireEndMs: 12000),
+    ];
+    await LabAudioPipeline.rollbackVerifiedWavStage(chunks, ownedRoot);
+    expect(await wire.exists(), isFalse);
+    expect(await staged.exists(), isFalse);
+    expect(await forbidden.exists(), isTrue);
+    expect(await external.readAsBytes(), sourceBytes);
+    expect(await ownedRoot.exists(), isTrue);
+  });
 }

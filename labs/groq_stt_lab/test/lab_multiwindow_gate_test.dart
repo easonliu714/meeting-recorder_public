@@ -93,6 +93,8 @@ void main() {
     var index = 0;
     var failSecond = false;
     var forgedFirstReplay = false;
+    var cancelAtFirst = false;
+    var cancelNow = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'inspectAudio') {
@@ -106,6 +108,7 @@ void main() {
         throw StateError('UNEXPECTED_NATIVE_METHOD');
       }
       final i = index++;
+      if (cancelAtFirst && i == 0) cancelNow = true;
       if (failSecond && i == 1) {
         throw PlatformException(code: 'LAB_AUDIO_PCM_GAP');
       }
@@ -131,10 +134,13 @@ void main() {
     });
     const pipeline = LabAudioPipeline();
     final probe = await pipeline.probe(source);
-    Future<List<LabStagedChunk>> stage() => pipeline.stage(
+    Future<List<LabStagedChunk>> stage({
+      bool Function()? cancellationRequested,
+    }) => pipeline.stage(
       source: source, probe: probe, sourceSha: sourceSha,
       wavOutputRoot: Directory('${root.path}/support'),
       nativeCacheRoot: cache,
+      cancellationRequested: cancellationRequested,
     );
     final actual = await stage();
     expect(actual, hasLength(2));
@@ -171,6 +177,28 @@ void main() {
       throwsA(isA<StateError>().having(
         (e) => e.message, 'code', 'LAB_NATIVE_OUTPUT_CONTRACT_HOLD')),
     );
+    expect(await LabAudioPipeline.digest(source), sourceSha);
+
+    // Explicit cancellation after the first physically verified window must
+    // not enqueue window 2 or retain the first new temporary output.
+    final cancelledFirst = File('${native.path}/cancel_first.wav');
+    await writePcm(cancelledFirst,
+        (windows[0].wireEndMs - windows[0].wireStartMs) * 16);
+    outputs[0] = cancelledFirst;
+    digests[0] = await LabAudioPipeline.digest(cancelledFirst);
+    index = 0;
+    forgedFirstReplay = false;
+    cancelAtFirst = true;
+    cancelNow = false;
+    await expectLater(
+      stage(cancellationRequested: () => cancelNow),
+      throwsA(isA<StateError>().having(
+        (e) => e.message, 'code', 'LAB_AUDIO_CANCELLED')),
+    );
+    expect(index, 1);
+    expect(await cancelledFirst.exists(), isFalse);
+    expect(await outputs[1].exists(), isTrue);
+    expect(await source.readAsBytes(), original);
     expect(await LabAudioPipeline.digest(source), sourceSha);
   });
 }

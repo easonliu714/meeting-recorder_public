@@ -9,16 +9,16 @@ WORKFLOW = (REPO / ".github/workflows/public-groq-lab-v021-debug-apk.yml")
 
 def identity_is_consistent(workflow: str, pubspec: str, debug: str) -> bool:
     return all((
-        'version: 0.4.19+24' in pubspec,
-        "versionName = '0.4.19'" in debug,
-        'versionCode = 24' in debug,
-        'public_lab_v24.groq_stt_lab' in debug,
-        'echo "VERSION=0.4.19+24"' in workflow,
-        '--build-name=0.4.19 --build-number=24' in workflow,
-        "versionName='0.4.19'" in workflow,
-        "versionCode='24'" in workflow,
-        'public_lab_v24.groq_stt_lab' in workflow,
-        'groq-stt-lab-v0.4.19+24-public-debug.apk' in workflow,
+        'version: 0.4.20+25' in pubspec,
+        "versionName = '0.4.20'" in debug,
+        'versionCode = 25' in debug,
+        'public_lab_v25.groq_stt_lab' in debug,
+        'echo "VERSION=0.4.20+25"' in workflow,
+        '--build-name=0.4.20 --build-number=25' in workflow,
+        "versionName='0.4.20'" in workflow,
+        "versionCode='25'" in workflow,
+        'public_lab_v25.groq_stt_lab' in workflow,
+        'groq-stt-lab-v0.4.20+25-public-debug.apk' in workflow,
     ))
 
 class BuildIdentityParityTests(unittest.TestCase):
@@ -33,12 +33,12 @@ class BuildIdentityParityTests(unittest.TestCase):
         pubspec = (LAB / 'pubspec.yaml').read_text(encoding='utf8')
         debug = (LAB / 'lib/lab_debug_log.dart').read_text(encoding='utf8')
         self.assertFalse(identity_is_consistent(
-            workflow.replace('echo "VERSION=0.4.19+24"',
+            workflow.replace('echo "VERSION=0.4.20+25"',
                              'echo "VERSION=0.4.17+22"'),
             pubspec, debug))
         self.assertFalse(identity_is_consistent(
             workflow, pubspec,
-            debug.replace("versionCode = 24", "versionCode = 21")))
+            debug.replace("versionCode = 25", "versionCode = 21")))
 
 if __name__ == '__main__':
     unittest.main()
