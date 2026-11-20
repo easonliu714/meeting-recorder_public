@@ -28,6 +28,16 @@ class BuildIdentityParityTests(unittest.TestCase):
             (LAB / 'pubspec.yaml').read_text(encoding='utf8'),
             (LAB / 'lib/lab_debug_log.dart').read_text(encoding='utf8')))
 
+    def test_bootstrap_native_package_matches_current_identity(self):
+        bootstrap = (LAB / 'tool/bootstrap.sh').read_text(encoding='utf8')
+        from verify_android_identity import EXPECTED_PACKAGE
+        organization = EXPECTED_PACKAGE.rsplit('.', 1)[0]
+        package_path = EXPECTED_PACKAGE.replace('.', '/')
+        self.assertIn('--org=' + organization, bootstrap)
+        self.assertIn('android/app/src/main/kotlin/' + package_path, bootstrap)
+        self.assertNotIn('public_lab_v25', bootstrap)
+        self.assertIn('v0.4.21+26', bootstrap)
+
     def test_stale_provenance_fails_closed(self):
         workflow = WORKFLOW.read_text(encoding='utf8')
         pubspec = (LAB / 'pubspec.yaml').read_text(encoding='utf8')
