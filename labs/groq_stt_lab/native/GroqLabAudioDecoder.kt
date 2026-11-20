@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v25.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v26.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -25,11 +25,22 @@ import java.security.MessageDigest
 internal class LabPcmWindowEvidence(val safeMetrics: Map<String, Long>) :
     IllegalStateException("LAB_AUDIO_INCOMPLETE_PCM_WINDOW")
 
+// The early leading-PTS guard emits only integer diagnostics, never source data.
+internal class LabLeadingPtsEvidence(val safeMetrics: Map<String, Long>) :
+    IllegalStateException("LAB_AUDIO_LEADING_PTS_HOLD")
+
 internal object GroqLabAudioDecoder {
     private const val TARGET_RATE = 16000
     private const val WIRE_CEILING = 22_500_000L
     private const val MAX_WINDOW_US = 702_000_000L
     private const val MAX_GAP_US = 150_000L
+    // Only one AAC-LC (1024-sample) source-rate priming frame plus 2ms
+    // rounding may be rebased at the first wire; no silent PCM is created.
+    // MP3 continues using the frozen 50ms guard.
+    private fun firstWireLeadingLimitUs(mime: String, inputRate: Int): Long =
+        if (mime == "audio/mp4a-latm") {
+            minOf(130_000L, (1_024_000_000L + inputRate - 1L) / inputRate + 2_000L)
+        } else 50_000L
     private const val MAX_INPUT_BYTES = 2 * 1024 * 1024
     // A short MP3 seek may not return the full decoder tail on all devices.
     // A replay from file offset 0 is allowed ONCE, ONLY for a bounded 15m
@@ -242,6 +253,7 @@ internal object GroqLabAudioDecoder {
             require(inputRate in 8000..48000 && inputChannels in 1..2) {
                 "LAB_AUDIO_UNSUPPORTED_CHANNELS_OR_RATE"
             }
+            val leadingPtsLimitUs = firstWireLeadingLimitUs(mime, inputRate)
             extractor.selectTrack(track)
             extractor.seekTo(
                 if (fromOrigin) 0L else maxOf(0L, startUs - 1_000_000L),
@@ -343,11 +355,19 @@ internal object GroqLabAudioDecoder {
                                         "LAB_AUDIO_NON_MONOTONIC_PCM_PTS"
                                     }
                                     if (firstDecodedUs < 0L) firstDecodedUs = rawPts
-                                    // Only the first wire window may normalize the
-                                    // observed bounded codec priming PTS; no silence.
+                                    // Only the first wire may normalize one source-rate
+                                    // codec priming frame; never fabricate silent PCM.
                                     val leadingUs = if (startUs == 0L) firstDecodedUs else 0L
-                                    require(leadingUs in 0L..50_000L) {
-                                        "LAB_AUDIO_LEADING_PTS_HOLD"
+                                    if (leadingUs !in 0L..leadingPtsLimitUs) {
+                                        throw LabLeadingPtsEvidence(mapOf(
+                                            "first_pts_us" to firstDecodedUs,
+                                            "leading_pts_limit_us" to leadingPtsLimitUs,
+                                            "source_sample_rate_hz" to inputRate.toLong(),
+                                            "window_start_us" to startUs,
+                                            "window_end_us" to endUs,
+                                            "last_input_pts_us" to lastInputPtsUs,
+                                            "input_packets_queued" to inputPacketsQueued
+                                        ))
                                     }
                                     val pts = rawPts - leadingUs
                                     if (prevUs >= 0L && pts - prevUs > MAX_GAP_US) {
@@ -390,7 +410,7 @@ internal object GroqLabAudioDecoder {
                 if (!(frames > 0L && frames + leadingFrames >= expected - 320L &&
                         frames <= expected &&
                         firstDecodedUs <= startUs +
-                            (if (startUs == 0L) 50_000L else 0L) &&
+                            (if (startUs == 0L) leadingPtsLimitUs else 0L) &&
                         lastDecodedUs >= endUs - 25_000L)) {
                     throw LabPcmWindowEvidence(mapOf(
                         "expected_frames" to expected,
@@ -428,6 +448,7 @@ internal object GroqLabAudioDecoder {
                 "channels" to 1,
                 "bitsPerSample" to 16,
                 "outputFrames" to frames,
+                "inputSampleRateHz" to inputRate,
                 "firstDecodedPtsUs" to firstDecodedUs,
                 "lastDecodedPtsUs" to lastDecodedUs,
                 "leadingPtsCompensationUs" to if (startUs == 0L) firstDecodedUs else 0L,

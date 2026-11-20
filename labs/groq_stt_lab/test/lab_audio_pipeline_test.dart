@@ -100,6 +100,7 @@ void main() {
           'outputPath': output.path,'bytes':await output.length(),
           'wireSha256': wireSha,'sourceSha256': sourceSha,
           'sourceDurationUs':12000000,'sourceBytes':await source.length(),
+          'inputSampleRateHz':44100,
           'requestedStartUs':0,'requestedEndUs':12000000,
           'acousticTimingVerified':false,'ownerPlaybackVerified':false,
           'mime':'audio/wav','codec':'audio/pcm','sampleRate':16000,
@@ -140,7 +141,7 @@ void main() {
       if (call.method == 'inspectAudio') {
         return {
           'mime':'audio/mpeg','durationUs':12000000,
-          'sourceBytes':await source.length(),
+          'sourceBytes':await source.length(),'sampleRate':44100,
         };
       }
       if (call.method == 'decodeAudioWindow') {
@@ -151,6 +152,7 @@ void main() {
               ? 11000000 : 12000000,
           'sourceBytes':alteredProof == 'bytes'
               ? original.length + 1 : original.length,
+          'inputSampleRateHz':alteredProof == 'rate' ? 16000 : 44100,
           'requestedStartUs':0,'requestedEndUs':12000000,
           'acousticTimingVerified':alteredProof == 'acoustic'
               ? true : false,
@@ -173,7 +175,7 @@ void main() {
     );
     // Positive full physical WAV/hash/clock receipt still succeeds.
     expect(await stage(), hasLength(1));
-    for (final bad in ['duration', 'bytes', 'acoustic']) {
+    for (final bad in ['duration', 'bytes', 'acoustic', 'rate']) {
       alteredProof = bad;
       await expectLater(
         stage(),
@@ -228,18 +230,38 @@ void main() {
 
   test('native MP3 AAC leading PTS and failure guards', () {
     bool ok({required int frames, required int first, required int last,
-        required int end, required int origin, int start = 0}) =>
+        required int end, required int origin, int start = 0,
+        LabAudioKind kind = LabAudioKind.mp3, int rate = 44100}) =>
         LabNativePcmCoverage.accepts(
           outputFrames: frames,
           expectedFrames: (end - start) * 16 ~/ 1000,
           wireStartUs: start, wireEndUs: end,
           firstDecodedPtsUs: first, lastDecodedPtsUs: last,
-          leadingPtsCompensationUs: origin);
+          leadingPtsCompensationUs: origin,
+          sourceKind: kind, sourceSampleRateHz: rate);
     // Owner v21 MP3 and M4A raw PTS, with physical frame-count models.
     expect(ok(frames: 240100, first: 40249, last: 15046507,
         end: 15046000, origin: 40249), isTrue);
     expect(ok(frames: 239629, first: 23219, last: 15000067,
-        end: 15000000, origin: 23219), isTrue);
+        end: 15000000, origin: 23219,
+        kind: LabAudioKind.aacM4a), isTrue);
+    // A 16kHz AAC-LC 1024-sample priming frame is 64ms.
+    expect(LabNativePcmCoverage.firstWireLeadingLimitUs(
+        LabAudioKind.aacM4a, 16000), 66000);
+    expect(ok(frames: 238976, first: 64000, last: 15000067,
+        end: 15000000, origin: 64000,
+        kind: LabAudioKind.aacM4a, rate: 16000), isTrue);
+    expect(ok(frames: 238976, first: 70000, last: 15000067,
+        end: 15000000, origin: 70000,
+        kind: LabAudioKind.aacM4a, rate: 16000), isFalse);
+    expect(ok(frames: 238000, first: 64000, last: 15000067,
+        end: 15000000, origin: 64000,
+        kind: LabAudioKind.aacM4a, rate: 16000), isFalse);
+    expect(ok(frames: 238976, first: 64000, last: 15000067,
+        end: 15000000, origin: 64000,
+        kind: LabAudioKind.mp3, rate: 16000), isFalse);
+    expect(LabNativePcmCoverage.firstWireLeadingLimitUs(
+        LabAudioKind.aacM4a, 0), -1);
     expect(ok(frames: 239000, first: 23219, last: 15000067,
         end: 15000000, origin: 23219), isFalse);
     expect(ok(frames: 239629, first: 60000, last: 15000067,

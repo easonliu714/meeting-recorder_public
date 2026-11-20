@@ -119,6 +119,7 @@ void main() {
         'outputPath': outputs[i].path, 'bytes': await outputs[i].length(),
         'wireSha256': digests[i], 'sourceSha256': sourceSha,
         'sourceDurationUs': durationUs, 'sourceBytes': original.length,
+        'inputSampleRateHz': 44100,
         'requestedStartUs': w.wireStartMs * 1000,
         'requestedEndUs': w.wireEndMs * 1000,
         'acousticTimingVerified': false, 'ownerPlaybackVerified': false,

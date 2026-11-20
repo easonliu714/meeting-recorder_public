@@ -4,13 +4,30 @@ This is a **separate Lab-only application**, not the Meeting Recorder public mai
 
 ## Security and data boundary
 
-- This Lab has an independently generated Android application ID: `com.example.meeting_recorder.public_lab_v22.groq_stt_lab`. Do not uninstall earlier Private Lab or Main App for this test. This build does not migrate Raw, Journal, draft or original recordings.
+- This Lab has an independently generated Android application ID: `com.example.meeting_recorder.public_lab_v26.groq_stt_lab`. Do not uninstall earlier Private Lab or Main App for this test. This build does not migrate Raw, Journal, draft or original recordings.
 - The APK is **Debug-only**, not a release and not signed with any Private or long-lived public keystore. It does not offer in-place upgrades for earlier Lab versions.
 - The Android picker reads an Owner-selected local file; source remains read-only. Synthetic fixtures and local-loopback tests only are used in CI.
 - The UI retains optional Groq/Gemini transports that are gated by explicit end-user consent; **CI never executes live Provider requests** and no secrets are used, persisted or embedded. No paid plan, background upload or automatic retry may be enabled.
 - The Public standard-runner workflow is scoped exclusively to this Lab branch and verifies source, tests, Kotlin, Debug APK App ID, signature, provenance and ZIP integrity. The existing Public Main CI/snapshot publication guard remains unchanged.
 - No recordings, transcripts, API credentials, private signing files, build histories, user logs, archived binaries or unreviewed Main source are copied into this branch.
 - Publishing source does not itself assert the right to redistribute third-party components under a new license; respect original dependency licenses. No new open-source license is granted by this snapshot.
+
+## v0.4.21+26 — source-rate bounded AAC-LC priming and fail-closed diagnostics
+
+The Owner v25 60-minute 16kHz M4A reproduces LAB_AUDIO_LEADING_PTS_HOLD
+before a physical Chunk, while 60-minute WAV and 12-minute MP3 staging
+and cancellation remain scoped Owner PASS. AAC-LC has a 1024-sample
+frame (64ms at 16kHz), which can exceed the prior fixed 50ms
+first-wire leading-PTS limit. Only one physical AAC source-rate
+frame plus 2ms rounding (absolute 130ms cap) can be rebased.
+The source MIME and rate are independently bound through the native
+probe and Dart physical output contract. Later windows, MP3's 50ms
+limit, complete Core/Wire timestamps, actual output frame count,
+SHA256, no silence insertion, source read-only and rollback remain.
+Early PTS failures report numeric PTS/rate/window evidence without
+paths, raw audio, transcript or credentials. Added bounded positive
+and negative codec/frame/source-rate tests plus cancellation regression.
+Physical Android AAC fix remains NOT_VERIFIED until Owner tests v26.
 
 ## v0.4.20+25 — LAB-1 user-cancellable 1–2h staging and failure-safe WAV cleanup
 The isolated Public Lab adds a cancel button while WAV/MP3/M4A staging.
@@ -77,7 +94,7 @@ flutter pub get
 flutter analyze
 flutter test
 (cd android && ./gradlew :app:compileDebugKotlin --no-daemon)
-flutter build apk --debug --no-pub --build-name=0.4.20 --build-number=25
+flutter build apk --debug --no-pub --build-name=0.4.21 --build-number=26
 ```
 
 No API key or provider call is required for local or CI testing.

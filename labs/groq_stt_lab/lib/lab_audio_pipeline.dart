@@ -10,10 +10,12 @@ import 'groq_wav_pcm_splitter.dart';
 enum LabAudioKind { wavPcm16, mp3, aacM4a }
 
 final class LabAudioProbe {
-  const LabAudioProbe(this.kind, this.mime, this.durationUs);
+  const LabAudioProbe(this.kind, this.mime, this.durationUs,
+      {this.inputSampleRateHz});
   final LabAudioKind kind;
   final String mime;
   final int? durationUs;
+  final int? inputSampleRateHz;
 
   String get label {
     switch (kind) {
@@ -74,6 +76,16 @@ final class LabCompressedWindowPlanner {
 /// Accept only physical PCM backed by a bounded first-window PTS origin.
 final class LabNativePcmCoverage {
   const LabNativePcmCoverage._();
+  // Mirror the native codec-rate bound independently of the physical receipt.
+  static int firstWireLeadingLimitUs(LabAudioKind kind, int sourceRateHz) {
+    if (sourceRateHz < 8000 || sourceRateHz > 48000) return -1;
+    if (kind == LabAudioKind.aacM4a) {
+      final frameUs = (1024000000 + sourceRateHz - 1) ~/ sourceRateHz;
+      return frameUs + 2000 > 130000 ? 130000 : frameUs + 2000;
+    }
+    return kind == LabAudioKind.mp3 ? 50000 : -1;
+  }
+
   static bool accepts({
     required int outputFrames,
     required int expectedFrames,
@@ -82,16 +94,21 @@ final class LabNativePcmCoverage {
     required int firstDecodedPtsUs,
     required int lastDecodedPtsUs,
     required int leadingPtsCompensationUs,
+    required LabAudioKind sourceKind,
+    required int sourceSampleRateHz,
   }) {
-    if (expectedFrames <= 0 || outputFrames <= 0 ||
+    final leadingLimitUs =
+        firstWireLeadingLimitUs(sourceKind, sourceSampleRateHz);
+    if (leadingLimitUs < 0 || expectedFrames <= 0 || outputFrames <= 0 ||
         outputFrames > expectedFrames || wireStartUs < 0 ||
         wireEndUs <= wireStartUs || firstDecodedPtsUs < 0 ||
         lastDecodedPtsUs < firstDecodedPtsUs ||
         lastDecodedPtsUs < wireEndUs - 25000 ||
         leadingPtsCompensationUs < 0 ||
-        leadingPtsCompensationUs > 50000) return false;
+        leadingPtsCompensationUs > leadingLimitUs) return false;
     if (wireStartUs == 0) {
-      if (firstDecodedPtsUs != leadingPtsCompensationUs) return false;
+      if (firstDecodedPtsUs != leadingPtsCompensationUs ||
+          firstDecodedPtsUs > leadingLimitUs) return false;
     } else if (leadingPtsCompensationUs != 0 ||
         firstDecodedPtsUs > wireStartUs) return false;
     final primingFrames = leadingPtsCompensationUs * 16000 ~/ 1000000;
@@ -225,10 +242,15 @@ final class LabAudioPipeline {
     if (codec != 'audio/mpeg' && codec != 'audio/mp4a-latm') {
       throw StateError('LAB_AUDIO_UNSUPPORTED_CODEC');
     }
+    if (meta['sampleRate'] is! int ||
+        meta['sampleRate'] < 8000 || meta['sampleRate'] > 48000) {
+      throw StateError('LAB_AUDIO_PROBE_SAMPLE_RATE_HOLD');
+    }
     LabCompressedWindowPlanner.plan(durationUs);
     return LabAudioProbe(
         codec == 'audio/mpeg' ? LabAudioKind.mp3 : LabAudioKind.aacM4a,
-        codec as String, durationUs);
+        codec as String, durationUs,
+        inputSampleRateHz: meta['sampleRate'] as int);
   }
 
   static Future<void> verifyPcm16Wave(File file, int expectedBytes) async {
@@ -307,6 +329,8 @@ final class LabAudioPipeline {
       // treated as a valid decoded PCM upload candidate.
       final durationUs = probe.durationUs;
       if (durationUs == null ||
+          LabNativePcmCoverage.firstWireLeadingLimitUs(
+              probe.kind, probe.inputSampleRateHz ?? -1) < 0 ||
           (probe.kind == LabAudioKind.mp3 && probe.mime != 'audio/mpeg') ||
           (probe.kind == LabAudioKind.aacM4a &&
               probe.mime != 'audio/mp4a-latm')) {
@@ -335,6 +359,7 @@ final class LabAudioPipeline {
             // The SHA alone does not bind a reused/forged duration record.
             meta['sourceDurationUs'] != durationUs ||
             meta['sourceBytes'] != sourceBytes ||
+            meta['inputSampleRateHz'] != probe.inputSampleRateHz ||
             meta['requestedStartUs'] != w.wireStartMs * 1000 ||
             meta['requestedEndUs'] != w.wireEndMs * 1000 ||
             // These are explicitly NOT acoustic or Owner playback proof.
@@ -382,6 +407,8 @@ final class LabAudioPipeline {
               firstDecodedPtsUs: meta['firstDecodedPtsUs'] as int,
               lastDecodedPtsUs: meta['lastDecodedPtsUs'] as int,
               leadingPtsCompensationUs: meta['leadingPtsCompensationUs'] as int,
+              sourceKind: probe.kind,
+              sourceSampleRateHz: probe.inputSampleRateHz!,
             ) ||
             bytes != 44 + frames * 2) {
           throw StateError('LAB_NATIVE_INCOMPLETE_AUDIO_WINDOW_HOLD');

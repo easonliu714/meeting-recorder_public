@@ -65,7 +65,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.20+25', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.21+26', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -224,6 +224,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
           'source_duration_us', 'last_input_pts_us',
           'input_packets_queued', 'input_eos_queued', 'output_eos_seen',
           'mp3_origin_replay_attempted',
+          'leading_pts_limit_us', 'source_sample_rate_hz',
         ]) {
           final value = details[key];
           if (value is int && value >= -1 && value <= 172800000000) {

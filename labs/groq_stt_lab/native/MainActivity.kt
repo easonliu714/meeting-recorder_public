@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v25.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v26.groq_stt_lab
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -48,7 +48,8 @@ class MainActivity : FlutterActivity() {
                     runOnUiThread {
                         result.error(code,
                             "Offline audio operation failed closed",
-                            (error as? LabPcmWindowEvidence)?.safeMetrics)
+                            (error as? LabPcmWindowEvidence)?.safeMetrics
+                                ?: (error as? LabLeadingPtsEvidence)?.safeMetrics)
                     }
                 }
             }

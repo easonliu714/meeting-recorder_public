@@ -21,7 +21,9 @@ class PublicPcmEvidenceTests(unittest.TestCase):
         for token in (
             "val rawPts = info.presentationTimeUs",
             "val pts = rawPts - leadingUs",
-            "leadingUs in 0L..50_000L",
+            "firstWireLeadingLimitUs(mime, inputRate)",
+            "leadingUs !in 0L..leadingPtsLimitUs",
+            "LAB_AUDIO_LEADING_PTS_HOLD",
             "firstDecodedPtsUs",
             "lastDecodedPtsUs",
             "leadingPtsCompensationUs",
@@ -40,11 +42,16 @@ class PublicPcmEvidenceTests(unittest.TestCase):
             self.assertIn('"' + key + '" to ', DECODER)
             self.assertIn("'" + key + "'", UI)
         self.assertIn('(error as? LabPcmWindowEvidence)?.safeMetrics', ACTIVITY)
+        self.assertIn('(error as? LabLeadingPtsEvidence)?.safeMetrics', ACTIVITY)
+        self.assertIn('"leading_pts_limit_us" to leadingPtsLimitUs', DECODER)
+        self.assertIn('"source_sample_rate_hz" to inputRate.toLong()', DECODER)
+        self.assertIn("'leading_pts_limit_us'", UI)
+        self.assertIn("'source_sample_rate_hz'", UI)
         self.assertIn("value is int && value >= -1 && value <= 172800000000", UI)
         self.assertIn("STAGE_PCM_WINDOW_METRICS", UI)
         for unsafe in ("sourcePath", "apiKey", "transcript", "sourceSha256"):
             self.assertNotIn('"' + unsafe + '" to ', DECODER[
-                DECODER.index('throw LabPcmWindowEvidence'):
+                DECODER.index('throw LabLeadingPtsEvidence'):
                 DECODER.index('finishWav(file, frames)')
             ])
 
