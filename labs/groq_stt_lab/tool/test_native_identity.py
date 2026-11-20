@@ -55,10 +55,10 @@ class LauncherIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "LAB_NATIVE_PACKAGE_MISMATCH_MAINACTIVITY"):
             assert_launcher_identity(self.android)
 
-    # A Private v20 package must never launch the independent Public v21 Lab.
-    def test_private_v20_native_package_rejected_for_public_v21(self):
+    # A Private v20 package must never launch the independent Public v22 Lab.
+    def test_private_v20_native_package_rejected_for_public_v22(self):
         self.assertEqual(
-            EXPECTED_PACKAGE, "com.example.meeting_recorder.public_lab_v21.groq_stt_lab"
+            EXPECTED_PACKAGE, "com.example.meeting_recorder.public_lab_v22.groq_stt_lab"
         )
         native = (self.android / "app/src/main/kotlin"
                   / Path(*EXPECTED_PACKAGE.split(".")) / "MainActivity.kt")
