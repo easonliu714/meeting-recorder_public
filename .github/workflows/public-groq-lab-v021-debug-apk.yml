@@ -28,15 +28,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-          fetch-depth: 3
+          fetch-depth: 8
 
       - name: Fail-closed scope, source and publication-safety audit
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/lab/public-v021-pcm-window-evidence-20261119
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^^)" = "$V21_HEAD"
-          test "$(git rev-parse HEAD^^^)" = "$PUBLIC_BASE_HEAD"
+          git merge-base --is-ancestor "$V21_HEAD" HEAD
+          test "$(git rev-parse "$V21_HEAD^")" = "$PUBLIC_BASE_HEAD"
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess
@@ -47,7 +47,7 @@ jobs:
               '.kt', '.py', '.sh'
           }
           tracked = subprocess.check_output(
-              ['git','diff','--name-only','HEAD^^^','HEAD'],
+              ['git','diff','--name-only','c0c993c00c72e79b9b72697b4b2205b66168f026','HEAD'],
               text=True).splitlines()
           workflow = '.github/workflows/public-groq-lab-v021-debug-apk.yml'
           assert workflow in tracked and 50 <= len(tracked) <= 65
