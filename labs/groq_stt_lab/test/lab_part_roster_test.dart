@@ -42,8 +42,8 @@ void main() {
 
   test('physical 2+3s WAV Parts attest SHA and contiguous duration clock',
       () async {
-    final a = await wav('undefined/a.wav', 2);
-    final b = await wav('undefined/b.wav', 3);
+    final a = await wav(root.path + '/a.wav', 2);
+    final b = await wav(root.path + '/b.wav', 3);
     final one = await LabPartRoster.append(
         source: a, probe: probe, previous: const []);
     final two = await LabPartRoster.append(
@@ -57,8 +57,8 @@ void main() {
 
   test('same-byte tamper blocks next receipt without deleting source',
       () async {
-    final a = await wav('undefined/a.wav', 2);
-    final b = await wav('undefined/b.wav', 3);
+    final a = await wav(root.path + '/a.wav', 2);
+    final b = await wav(root.path + '/b.wav', 3);
     final one = await LabPartRoster.append(
         source: a, probe: probe, previous: const []);
     final bytes = await a.readAsBytes();
@@ -74,8 +74,8 @@ void main() {
 
   test('duplicate source hash blocks replay and preserves both files',
       () async {
-    final a = await wav('undefined/a.wav', 2);
-    final b = File('undefined/b.wav');
+    final a = await wav(root.path + '/a.wav', 2);
+    final b = File(root.path + '/b.wav');
     await b.writeAsBytes(await a.readAsBytes());
     final one = await LabPartRoster.append(
         source: a, probe: probe, previous: const []);
@@ -86,12 +86,12 @@ void main() {
   });
 
   test('corrupt RIFF and contradictory MP3 metadata remain HOLD', () async {
-    final a = await wav('undefined/a.wav', 2);
+    final a = await wav(root.path + '/a.wav', 2);
     await a.writeAsBytes([1, 2, 3], flush: true);
     await expectLater(
         LabPartRoster.append(source: a, probe: probe, previous: const []),
         throwsFormatException);
-    final b = File('undefined/b.mp3');
+    final b = File(root.path + '/b.mp3');
     await b.writeAsBytes([1, 2, 3, 4], flush: true);
     for (final wrong in [
       const LabAudioProbe(LabAudioKind.mp3, 'audio/mp4a-latm', 1000000,
@@ -108,8 +108,8 @@ void main() {
   });
 
   test('reordered and deleted Part receipts never verify', () async {
-    final a = await wav('undefined/a.wav', 2);
-    final b = await wav('undefined/b.wav', 3);
+    final a = await wav(root.path + '/a.wav', 2);
+    final b = await wav(root.path + '/b.wav', 3);
     final one = await LabPartRoster.append(
         source: a, probe: probe, previous: const []);
     final two = await LabPartRoster.append(
