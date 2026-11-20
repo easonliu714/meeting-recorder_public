@@ -2,7 +2,7 @@ name: Public Groq STT Lab v0.4.17+22 isolated Debug APK
 on:
   push:
     branches:
-      - lab/public-v022-pcm-window-evidence-20261119
+      - lab/public-v021-pcm-window-evidence-20261119
 
 permissions:
   contents: read
@@ -35,8 +35,8 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/lab/public-v021-pcm-window-evidence-20261119
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = "$V21_HEAD"
-          test "$(git rev-parse HEAD^^)" = "$PUBLIC_BASE_HEAD"
+          test "$(git rev-parse HEAD^^)" = "$V21_HEAD"
+          test "$(git rev-parse HEAD^^^)" = "$PUBLIC_BASE_HEAD"
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess
@@ -47,7 +47,7 @@ jobs:
               '.kt', '.py', '.sh'
           }
           tracked = subprocess.check_output(
-              ['git','diff','--name-only','HEAD^^','HEAD'],
+              ['git','diff','--name-only','HEAD^^^','HEAD'],
               text=True).splitlines()
           workflow = '.github/workflows/public-groq-lab-v021-debug-apk.yml'
           assert workflow in tracked and 50 <= len(tracked) <= 65
