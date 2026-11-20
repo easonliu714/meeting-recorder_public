@@ -9,9 +9,9 @@ void main() {
     journal.record('SOURCE_PROBE_HOLD',
         {'code': 'LAB_AUDIO_UNSUPPORTED_CODEC', 'token': 'Bearer secret'});
     final text = journal.snapshot();
-    expect(text, contains('build_version=0.4.20+25'));
+    expect(text, contains('build_version=0.4.21+26'));
     expect(text, contains('source_commit='));
-    expect(text, contains('app_id=com.example.meeting_recorder.public_lab_v25.groq_stt_lab'));
+    expect(text, contains('app_id=com.example.meeting_recorder.public_lab_v26.groq_stt_lab'));
     expect(text, contains('SOURCE_PROBE_OK'));
     expect(text, contains('code=LAB_AUDIO_UNSUPPORTED_CODEC'));
     expect(text, contains('path=REDACTED'));
@@ -30,11 +30,15 @@ void main() {
       'window_start_us': 0,
       'window_end_us': 15000000,
       'source_duration_us': 15000000,
+      'leading_pts_limit_us': 66000,
+      'source_sample_rate_hz': 16000,
       'raw_audio': '/storage/private/owner.wav',
     });
     final text = journal.snapshot();
     expect(text, contains('expected_frames=240000'));
     expect(text, contains('first_pts_us=23000'));
+    expect(text, contains('leading_pts_limit_us=66000'));
+    expect(text, contains('source_sample_rate_hz=16000'));
     expect(text, contains('raw_audio=REDACTED'));
     expect(text, isNot(contains('owner.wav')));
   });
