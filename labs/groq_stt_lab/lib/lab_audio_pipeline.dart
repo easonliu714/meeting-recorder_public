@@ -129,11 +129,21 @@ final class LabCompressedChunkChain {
     var last = 0;
     for (var i = 0; i < chunks.length; i++) {
       final c = chunks[i];
-      final expectedWire = i == 0 ? 0 : last - LabCompressedWindowPlanner.overlapMs;
+      final expectedWire = i == 0
+          ? 0 : last - LabCompressedWindowPlanner.overlapMs;
       if (c.coreStartMs != last || c.coreEndMs <= last ||
           c.wireStartMs != expectedWire || c.wireEndMs != c.coreEndMs ||
           c.byteCount < 45 || c.byteCount >= 22500000 ||
-          !RegExp(r'^[0-9a-f]{64}
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(c.sha256Hex)) {
+        throw StateError('LAB_AUDIO_CHAIN_CLOCK_HOLD');
+      }
+      last = c.coreEndMs;
+    }
+    if (last != durationMs) throw StateError('LAB_AUDIO_CHAIN_CLOCK_HOLD');
+  }
+}
+
+/// Lab-only local source probe & physical audio stage. Nothing transmits bytes.
 final class LabAudioPipeline {
   const LabAudioPipeline({
     MethodChannel channel = const MethodChannel('groq_stt_lab/offline_audio'),
