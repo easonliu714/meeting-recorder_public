@@ -100,6 +100,21 @@ class GroqWavPcmSplitter {
     return _PcmLayout(dataOffset, dataSize, sampleRate, channels);
   }
 
+  /// Physical PCM16 duration for a read-only selected Recorder Part.
+  static Future<int> readDurationMs(File source) async {
+    final f = await source.open(mode: FileMode.read);
+    try {
+      final layout = await _layout(f);
+      final duration = (layout.size ~/ layout.align) * 1000 ~/ layout.sampleRate;
+      if (duration <= 0) {
+        throw const FormatException('LAB_PART_DURATION_HOLD');
+      }
+      return duration;
+    } finally {
+      await f.close();
+    }
+  }
+
   /// Verify actual staged WAV files before handing them to any consumer.
   /// A pure frame plan is insufficient: the physical headers, file lengths,
   /// 2-second context and complete source Core coverage must also agree.

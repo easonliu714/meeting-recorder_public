@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# LAB v0.4.21+26: independent Android package, foreground-only Groq HTTP.
+# LAB v0.4.22+27: independent Android package, foreground-only Groq HTTP.
 # v0.3's launch package mismatch is a blocking regression contract.
 python3 -m unittest discover -s tool -p 'test_native_identity.py' -v
 flutter create --no-pub --platforms=android --project-name=groq_stt_lab \
-  --org=com.example.meeting_recorder.public_lab_v26 .
+  --org=com.example.meeting_recorder.public_lab_v27 .
 python3 - <<'PY'
 from pathlib import Path
-native = Path("android/app/src/main/kotlin/com/example/meeting_recorder/public_lab_v26/groq_stt_lab")
+native = Path("android/app/src/main/kotlin/com/example/meeting_recorder/public_lab_v27/groq_stt_lab")
 native.mkdir(parents=True, exist_ok=True)
 for name in ("MainActivity.kt", "GroqLabAudioDecoder.kt"):
     source = Path("native") / name

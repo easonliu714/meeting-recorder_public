@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'lab_audio_pipeline.dart';
+import 'lab_part_roster.dart';
 import 'lab_debug_log.dart';
 import 'lab_groq_free_usage_monitor.dart';
 import 'lab_groq_stt_panel.dart';
@@ -47,6 +48,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   int? _originalBytes;
   String _status = '預設離線；真實 Groq STT 僅在逐段明確同意後呼叫。';
   List<LabStagedChunk> _chunks = const [];
+  final List<LabPartReceipt> _partRoster = [];
   bool _busy = false;
   bool _stagingAudio = false;
   bool _cancelStagingRequested = false;
@@ -65,7 +67,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.21+26', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.22+27', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -134,6 +136,83 @@ class _GroqLabHomeState extends State<GroqLabHome> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  // Independently selected Recorder Parts; in-memory only, no Provider I/O.
+  Future<void> _appendRecorderPart() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _status = '驗證原始 Recorder Part…';
+    });
+    _debug.record('PART_PICK_START');
+    try {
+      final selection = await FilePicker.platform.pickFiles(
+          type: FileType.audio, allowMultiple: false, withData: false);
+      if (selection == null) {
+        _debug.record('PART_PICK_CANCELLED');
+        if (mounted) setState(() => _status = '已取消加入 Part。');
+        return;
+      }
+      final path = selection.files.single.path;
+      if (path == null || path.isEmpty) {
+        throw StateError('LAB_PART_PICKER_PATH_MISSING');
+      }
+      final source = File(path);
+      final probe = await _pipeline.probe(source);
+      final receipt = await LabPartRoster.append(
+          source: source, probe: probe, previous: _partRoster);
+      if (!mounted) return;
+      _debug.record('PART_ROSTER_ADD_OK', {
+        'index': _partRoster.length + 1,
+        'kind': receipt.kind.name,
+        'bytes': receipt.bytes,
+        'sha12': receipt.sha256.substring(0, 12),
+        'duration_ms': receipt.durationMs,
+        'logical_start_ms': receipt.logicalStartMs,
+        'logical_end_ms': receipt.logicalEndMs,
+      });
+      setState(() {
+        _partRoster.add(receipt);
+        _status = '已加入 ' + _partRoster.length.toString() +
+            ' 個來源 Part，未修改原檔。';
+      });
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('PART_ROSTER_HOLD', {'code': code});
+      if (mounted) setState(() => _status = 'Part HOLD：' + code);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _verifyRecorderParts() async {
+    if (_busy || _partRoster.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await LabPartRoster.verify(_partRoster);
+      _debug.record('PART_ROSTER_VERIFY_OK', {
+        'parts': _partRoster.length,
+        'logical_end_ms': _partRoster.last.logicalEndMs,
+      });
+      if (mounted) setState(() => _status =
+          'Part SHA與大小一致；邏輯時軸僅供預檢，非 Recorder PTS。');
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('PART_ROSTER_HOLD', {'code': code});
+      if (mounted) setState(() => _status = 'Part 驗證 HOLD：' + code);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _clearRecorderParts() {
+    if (_busy) return;
+    setState(() {
+      _partRoster.clear();
+      _status = '已清除記憶體中的 Part 清單，原始音檔不變。';
+    });
+    _debug.record('PART_ROSTER_CLEAR');
   }
 
   void _requestStageCancellation() {
@@ -507,6 +586,40 @@ class _GroqLabHomeState extends State<GroqLabHome> {
             if (_busy) const LinearProgressIndicator(),
             const SizedBox(height: 12),
             Text(_status, key: const Key('lab-status')),
+            const Divider(height: 24),
+            ExpansionTile(
+              key: const Key('recorder-part-roster'),
+              title: const Text('LAB-1P｜Recorder Part 只讀驗證'),
+              children: [
+                const Text('依真正 Part 順序逐一加入；最長 2 小時／12 段。'
+                    '只讀 SHA、大小、音訊時長；邏輯時間是累計選入時長，'
+                    '不是 Recorder 真正 PTS。清除清單不刪檔，重開後不保存。'),
+                FilledButton.tonal(
+                  key: const Key('part-roster-add'),
+                  onPressed: _busy ? null : _appendRecorderPart,
+                  child: const Text('依序加入一個 Recorder Part')),
+                OutlinedButton(
+                  key: const Key('part-roster-verify'),
+                  onPressed: _busy || _partRoster.isEmpty
+                      ? null : _verifyRecorderParts,
+                  child: const Text('重新驗證全部來源 Part')),
+                OutlinedButton(
+                  key: const Key('part-roster-clear'),
+                  onPressed: _busy || _partRoster.isEmpty
+                      ? null : _clearRecorderParts,
+                  child: const Text('清除清單（不刪原檔）')),
+                Text('已選：' + _partRoster.length.toString() +
+                    '；邏輯累計：' + (_partRoster.isEmpty ? '0' :
+                    _partRoster.last.logicalEndMs.toString()) + ' ms'),
+                for (var i = 0; i < _partRoster.length; i++)
+                  Text('Part ' + (i + 1).toString() + ' ' +
+                    _partRoster[i].kind.name + ' ' +
+                    _partRoster[i].bytes.toString() + 'B SHA12 ' +
+                    _partRoster[i].sha256.substring(0, 12) +
+                    ' ｜邏輯 ' + _partRoster[i].logicalStartMs.toString() +
+                    '–' + _partRoster[i].logicalEndMs.toString() + 'ms'),
+              ],
+            ),
             const Divider(height: 24),
             ExpansionTile(
               key: const Key('free-monitor-offline'),

@@ -1,3 +1,23 @@
+## v0.4.22+27 — Lab Recorder Part read-only source roster and logical-clock preflight
+
+- This new **separate** Lab action selects one Recorder audio Part at a time, in
+  explicit Owner-selected order, records read-only source bytes/SHA256 and a
+  WAV physical RIFF PCM16 duration (or Android native compressed probe time).
+  It recomputes source hashes before adding the next Part or verifying the
+  current roster. Limit: 12 Parts / 2 hours of cumulative duration.
+- Its cumulative logical time range is calculated from *selected file duration*
+  and **does not attest real Recorder source PTS, natural acoustic continuity,
+  true Part order, overlap dedup, Provider RAW, or Main integration**.
+- Missing file, same-byte source mutation, duplicate identity, invalid RIFF,
+  contradictory compressed MIME/sample rate, forged logical clock or excess
+  duration fail closed; original media remains read-only. The roster lives in
+  memory only and clearing it never deletes a selected source. No raw media,
+  path, full SHA, transcript or Provider key is exported.
+- Existing v26 Owner 9/9 real-device WAV/MP3/M4A long-audio stage and cancel
+  gates remain frozen. The new Recorder Part preflight is unverified on Owner
+  handset until exact-head CI/APK and physical UAT; actual global PTS/1–2h
+  real-recording and restart/storage/Provider proofs remain incomplete.
+
 # Groq STT Lab — audited Public Android test branch
 
 This is a **separate Lab-only application**, not the Meeting Recorder public main application, and is **not** a publication of the Private Main project's history. The source/test/tool files in this branch were selected after an explicit Owner scope decision, reviewed for credentials and personal content, and imported as independent text snapshots. This document is not a roadmap: authoritative progress and Owner UAT remain in the Private repository's two canonical governance documents.
