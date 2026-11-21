@@ -80,6 +80,26 @@ final class LabPartRoster {
       durationMs: durationMs, logicalStartMs: start, logicalEndMs: end);
   }
 
+  /// Optional overlap witness for source WAVs known to share 2s of audio.
+  /// Never use the result as evidence of Recorder-global timestamps.
+  static Future<int> verifyWavBoundary(
+      List<LabPartReceipt> parts, int rightIndex) async {
+    if (rightIndex <= 0 || rightIndex >= parts.length) {
+      throw StateError('LAB_PART_WAV_SEAM_INDEX_HOLD');
+    }
+    await verify(parts);
+    final left = parts[rightIndex - 1];
+    final right = parts[rightIndex];
+    if (left.kind != LabAudioKind.wavPcm16 ||
+        right.kind != LabAudioKind.wavPcm16) {
+      throw StateError('LAB_PART_WAV_SEAM_CODEC_HOLD');
+    }
+    final matched = await GroqWavPcmSplitter.verifyExactPartOverlap(
+        left: left.source, right: right.source);
+    await verify(parts);
+    return matched;
+  }
+
   static Future<void> verify(List<LabPartReceipt> parts) async {
     if (parts.isEmpty || parts.length > maxParts) {
       throw StateError('LAB_PART_ROSTER_EMPTY_OR_OVERSIZE_HOLD');

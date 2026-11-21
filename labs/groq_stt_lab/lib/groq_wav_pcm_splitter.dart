@@ -115,6 +115,55 @@ class GroqWavPcmSplitter {
     }
   }
 
+  /// Exact physical two-second WAV overlap, read-only. A sample match
+  /// does not attest Recorder session, global PTS or arbitrary continuity.
+  static Future<int> verifyExactPartOverlap({
+    required File left, required File right,
+  }) async {
+    final a = await left.open(mode: FileMode.read);
+    try {
+      final b = await right.open(mode: FileMode.read);
+      try {
+        final la = await _layout(a);
+        final lb = await _layout(b);
+        if (la.sampleRate != lb.sampleRate || la.channels != lb.channels) {
+          throw StateError('LAB_PART_WAV_SEAM_FORMAT_HOLD');
+        }
+        final bytes = la.sampleRate * 2 * la.align;
+        if (la.size < bytes || lb.size < bytes) {
+          throw StateError('LAB_PART_WAV_SEAM_SHORT_HOLD');
+        }
+        await a.setPosition(la.offset + la.size - bytes);
+        await b.setPosition(lb.offset);
+        var remaining = bytes;
+        int? firstByte;
+        var varied = false;
+        while (remaining > 0) {
+          final count = math.min(32768, remaining);
+          final x = await a.read(count);
+          final y = await b.read(count);
+          if (x.length != count || y.length != count) {
+            throw StateError('LAB_PART_WAV_SEAM_TRUNCATED_HOLD');
+          }
+          for (var i = 0; i < count; i++) {
+            if (x[i] != y[i]) {
+              throw StateError('LAB_PART_WAV_SEAM_MISMATCH_HOLD');
+            }
+            firstByte ??= x[i];
+            if (x[i] != firstByte) varied = true;
+          }
+          remaining -= count;
+        }
+        if (!varied) throw StateError('LAB_PART_WAV_SEAM_SILENCE_HOLD');
+        return bytes;
+      } finally {
+        await b.close();
+      }
+    } finally {
+      await a.close();
+    }
+  }
+
   /// Verify actual staged WAV files before handing them to any consumer.
   /// A pure frame plan is insufficient: the physical headers, file lengths,
   /// 2-second context and complete source Core coverage must also agree.

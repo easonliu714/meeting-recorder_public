@@ -67,7 +67,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.22+27', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.23+28', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -201,6 +201,32 @@ class _GroqLabHomeState extends State<GroqLabHome> {
       final code = LabDebugJournal.failureCode(e);
       _debug.record('PART_ROSTER_HOLD', {'code': code});
       if (mounted) setState(() => _status = 'Part 驗證 HOLD：' + code);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Optional evidence-only comparison. An ordinary Recorder Part boundary
+  // need not contain a 2s overlap; HOLD does not imply audio corruption.
+  Future<void> _verifyWavSeams() async {
+    if (_busy || _partRoster.length < 2) return;
+    setState(() {
+      _busy = true;
+      _status = '比對相鄰 WAV 的實際 2 秒 PCM16 重疊樣本…';
+    });
+    try {
+      for (var i = 1; i < _partRoster.length; i++) {
+        final bytes = await LabPartRoster.verifyWavBoundary(_partRoster, i);
+        _debug.record('PART_WAV_SEAM_OK', {
+          'boundary': i, 'overlap_ms': 2000, 'bytes': bytes,
+        });
+      }
+      if (mounted) setState(() => _status =
+          'WAV 實體重疊樣本相同；尚未驗證 Recorder 身分或跨 Part PTS。');
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('PART_WAV_SEAM_HOLD', {'code': code});
+      if (mounted) setState(() => _status = 'WAV 邊界比對 HOLD：' + code);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -603,6 +629,14 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                   onPressed: _busy || _partRoster.isEmpty
                       ? null : _verifyRecorderParts,
                   child: const Text('重新驗證全部來源 Part')),
+                OutlinedButton(
+                  key: const Key('part-roster-seam'),
+                  onPressed: _busy || _partRoster.length < 2
+                      ? null : _verifyWavSeams,
+                  child: const Text('檢查相鄰 WAV 的 2 秒實際重疊')),
+                const Text('僅適用於原本預期共享 2 秒樣本的 PCM16 WAV。'
+                    '一般 Recorder 分段未必有重疊；HOLD 不等於損壞，'
+                    '且不是全域時間戳證明。'),
                 OutlinedButton(
                   key: const Key('part-roster-clear'),
                   onPressed: _busy || _partRoster.isEmpty

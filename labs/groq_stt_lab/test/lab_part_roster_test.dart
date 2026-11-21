@@ -30,6 +30,18 @@ Future<File> wav(String path, int secs) async {
   return file;
 }
 
+Future<File> patternedWav(String path, int startSecond, int seconds) async {
+  final source = await wav(path, seconds);
+  final bytes = await source.readAsBytes();
+  final data = ByteData.sublistView(bytes);
+  for (var frame = 0; frame < 8000 * seconds; frame++) {
+    data.setInt16(44 + frame * 2,
+        ((startSecond * 8000 + frame) * 137) % 65536 - 32768, Endian.little);
+  }
+  await source.writeAsBytes(bytes, flush: true);
+  return source;
+}
+
 void main() {
   late Directory root;
   setUp(() async {
@@ -105,6 +117,67 @@ void main() {
           throwsStateError);
     }
     expect(await b.length(), 4);
+  });
+
+  test('two real WAVs with 2s shared samples attest without source writes',
+      () async {
+    final a = await patternedWav(root.path + '/a.wav', 0, 4);
+    final b = await patternedWav(root.path + '/b.wav', 2, 4);
+    final shaA = await LabAudioPipeline.digest(a);
+    final shaB = await LabAudioPipeline.digest(b);
+    final one = await LabPartRoster.append(
+        source: a, probe: probe, previous: const []);
+    final two = await LabPartRoster.append(
+        source: b, probe: probe, previous: [one]);
+    expect(await LabPartRoster.verifyWavBoundary([one, two], 1), 32000);
+    expect(two.logicalEndMs, 8000); // not global Recorder PTS
+    expect(await LabAudioPipeline.digest(a), shaA);
+    expect(await LabAudioPipeline.digest(b), shaB);
+  });
+
+  test('mismatched audio and short segments HOLD safely', () async {
+    final a = await patternedWav(root.path + '/a.wav', 0, 4);
+    final b = await patternedWav(root.path + '/b.wav', 3, 4);
+    final one = await LabPartRoster.append(
+        source: a, probe: probe, previous: const []);
+    final two = await LabPartRoster.append(
+        source: b, probe: probe, previous: [one]);
+    await expectLater(
+      LabPartRoster.verifyWavBoundary([one, two], 1),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_PART_WAV_SEAM_MISMATCH_HOLD')));
+    await expectLater(LabPartRoster.verifyWavBoundary([one, two], 0),
+        throwsStateError);
+    final shortA = await patternedWav(root.path + '/shortA.wav', 0, 1);
+    final shortB = await patternedWav(root.path + '/shortB.wav', 1, 1);
+    final sa = await LabPartRoster.append(
+        source: shortA, probe: probe, previous: const []);
+    final sb = await LabPartRoster.append(
+        source: shortB, probe: probe, previous: [sa]);
+    await expectLater(
+      LabPartRoster.verifyWavBoundary([sa, sb], 1),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_PART_WAV_SEAM_SHORT_HOLD')));
+    expect(await a.exists() && await b.exists(), isTrue);
+  });
+
+  test('identical silence is not acceptable acoustic evidence', () async {
+    final a = await patternedWav(root.path + '/a.wav', 0, 4);
+    final b = await patternedWav(root.path + '/b.wav', 2, 4);
+    final ab = await a.readAsBytes();
+    ab.fillRange(44 + 2 * 16000, 44 + 4 * 16000, 0);
+    await a.writeAsBytes(ab, flush: true);
+    final bb = await b.readAsBytes();
+    bb.fillRange(44, 44 + 2 * 16000, 0);
+    await b.writeAsBytes(bb, flush: true);
+    final one = await LabPartRoster.append(
+        source: a, probe: probe, previous: const []);
+    final two = await LabPartRoster.append(
+        source: b, probe: probe, previous: [one]);
+    await expectLater(
+      LabPartRoster.verifyWavBoundary([one, two], 1),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_PART_WAV_SEAM_SILENCE_HOLD')));
   });
 
   test('reordered and deleted Part receipts never verify', () async {
