@@ -27,7 +27,7 @@ class NativePartPtsContract(unittest.TestCase):
             self.assertNotIn(forbidden, part)
 
     def test_channel_bounded_source_and_scoped_log(self):
-        self.assertIn('call.method == "inspectPartPts"', ACTIVITY)
+        self.assertIn('"inspectPartPts" -> GroqLabAudioDecoder.inspectSourcePts(sourcePath)', ACTIVITY)
         self.assertIn('GroqLabAudioDecoder.inspectSourcePts(sourcePath)', ACTIVITY)
         for token in ("LabPartRoster.verify(parts)", "sourceBytes",
                       "firstPtsUs", "lastPtsUs", "maxGapUs",
