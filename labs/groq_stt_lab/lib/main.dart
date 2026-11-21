@@ -788,46 +788,6 @@ class _GroqLabHomeState extends State<GroqLabHome> {
             ),
             const Divider(height: 24),
             ExpansionTile(
-              key: const Key('lab-mic-recorder'),
-              title: const Text('LAB-1R｜真實麥克風 2-Part 來源測試'),
-              children: [
-                const Text('只有按下錄製才向系統要求麥克風權限；'
-                    '首次授權後需要再次點擊。全程在前景，本機'
-                    '單一 AudioRecord 連續擷取 6 秒，保留兩個實體 WAV'
-                    '（各 3 秒）。不呼叫 Groq／Gemini，不傳送錄音。'
-                    '原始 Part 留在獨立 Lab 私有資料夾，'
-                    '重驗與清除其他清單都不會刪檔。'),
-                FilledButton.tonal(
-                  key: const Key('lab-mic-capture'),
-                  onPressed: _busy ? null : _captureLabMicParts,
-                  child: const Text('明確開始 6 秒本機麥克風錄音'),
-                ),
-                OutlinedButton(
-                  key: const Key('lab-mic-verify'),
-                  onPressed: _busy || _micSession == null
-                      ? null : _verifyLabMicParts,
-                  child: const Text('重新驗證本次 Lab 錄音 Part SHA'),
-                ),
-                const Text('同一 Lab AudioRecord 的連續樣本序號'
-                  '僅代表本次實測錄製的來源順序；'
-                  '尚不能證明 Main Recorder 跨段 PTS 或'
-                  '1–2 小時連續錄音沒有遺失。'),
-                if (_micSession != null) ...[
-                  const Text('已建立本機 Lab 原始錄音 Session：2 個 WAV Part'),
-                  for (var i = 0; i < _micSession!.parts.length; i++)
-                    Text('Part ' + (i + 1).toString() +
-                        '：樣本 ' +
-                        _micSession!.parts[i].frameStart.toString() +
-                        '–' + _micSession!.parts[i].frameEnd.toString() +
-                        '；SHA12 ' +
-                        _micSession!.parts[i].receipt.sha256.substring(0, 12) +
-                        '；' +
-                        _micSession!.parts[i].receipt.bytes.toString() + ' B'),
-                ],
-              ],
-            ),
-            const Divider(height: 24),
-            ExpansionTile(
               key: const Key('free-monitor-offline'),
               title: const Text('LAB-2｜Groq Free 用量與冷卻（離線模擬）'),
               children: [
@@ -974,6 +934,46 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                   trailing: Text('${_chunks[i].byteCount} B'),
                 ),
             ],
+            const Divider(height: 24),
+            ExpansionTile(
+              key: const Key('lab-mic-recorder'),
+              title: const Text('LAB-1R｜真實麥克風 2-Part 來源測試'),
+              children: [
+                const Text('只有按下錄製才向系統要求麥克風權限；'
+                    '首次授權後需要再次點擊。全程在前景，本機'
+                    '單一 AudioRecord 連續擷取 6 秒，保留兩個實體 WAV'
+                    '（各 3 秒）。不呼叫 Groq／Gemini，不傳送錄音。'
+                    '原始 Part 留在獨立 Lab 私有資料夾，'
+                    '重驗與清除其他清單都不會刪檔。'),
+                FilledButton.tonal(
+                  key: const Key('lab-mic-capture'),
+                  onPressed: _busy ? null : _captureLabMicParts,
+                  child: const Text('明確開始 6 秒本機麥克風錄音'),
+                ),
+                OutlinedButton(
+                  key: const Key('lab-mic-verify'),
+                  onPressed: _busy || _micSession == null
+                      ? null : _verifyLabMicParts,
+                  child: const Text('重新驗證本次 Lab 錄音 Part SHA'),
+                ),
+                const Text('同一 Lab AudioRecord 的連續樣本序號'
+                  '僅代表本次實測錄製的來源順序；'
+                  '尚不能證明 Main Recorder 跨段 PTS 或'
+                  '1–2 小時連續錄音沒有遺失。'),
+                if (_micSession != null) ...[
+                  const Text('已建立本機 Lab 原始錄音 Session：2 個 WAV Part'),
+                  for (var i = 0; i < _micSession!.parts.length; i++)
+                    Text('Part ' + (i + 1).toString() +
+                        '：樣本 ' +
+                        _micSession!.parts[i].frameStart.toString() +
+                        '–' + _micSession!.parts[i].frameEnd.toString() +
+                        '；SHA12 ' +
+                        _micSession!.parts[i].receipt.sha256.substring(0, 12) +
+                        '；' +
+                        _micSession!.parts[i].receipt.bytes.toString() + ' B'),
+                ],
+              ],
+            ),
           ]),
         ),
       );
