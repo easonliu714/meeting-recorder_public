@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'lab_audio_pipeline.dart';
 import 'lab_part_roster.dart';
 import 'lab_part_native_pts.dart';
+import 'lab_mic_capture.dart';
 import 'lab_debug_log.dart';
 import 'lab_groq_free_usage_monitor.dart';
 import 'lab_groq_stt_panel.dart';
@@ -41,6 +42,7 @@ class GroqLabHome extends StatefulWidget {
 class _GroqLabHomeState extends State<GroqLabHome> {
   final _pipeline = const LabAudioPipeline();
   final _nativePartPts = const LabPartNativePtsScanner();
+  final _micRecorder = const LabMicCapture();
   final _debug = LabDebugJournal();
   final _freeMonitor = LabGroqFreeUsageMonitor();
   int _mockFreeResponseSerial = 0;
@@ -52,6 +54,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   List<LabStagedChunk> _chunks = const [];
   final List<LabPartReceipt> _partRoster = [];
   List<LabPartNativePtsReceipt> _partPtsResults = const [];
+  LabMicSessionEvidence? _micSession;
   bool _busy = false;
   bool _stagingAudio = false;
   bool _cancelStagingRequested = false;
@@ -70,7 +73,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.24+29', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.25+30', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -270,6 +273,76 @@ class _GroqLabHomeState extends State<GroqLabHome> {
       final code = LabDebugJournal.failureCode(e);
       _debug.record('PART_NATIVE_PTS_HOLD', {'code': code});
       if (mounted) setState(() => _status = '來源封包 PTS HOLD：' + code);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Explicit owner click only; separate from selected Recorder Parts.
+  // Creates two actual WAVs in a fresh app-private Lab recording session.
+  // Native sampler offsets are local to THIS Lab AudioRecord session.
+  Future<void> _captureLabMicParts() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _status = '僅本機錄製 6 秒麥克風（每段 3 秒），請持續說話…';
+    });
+    _debug.record('LAB_MIC_CAPTURE_START', {'parts': 2, 'seconds': 6});
+    try {
+      final captured = await _micRecorder.capture();
+      if (!mounted) return;
+      _debug.record('LAB_MIC_CAPTURE_OK', {
+        'parts': captured.parts.length,
+        'total_frames': 96000,
+        'total_ms': 6000,
+      });
+      for (var i = 0; i < captured.parts.length; i++) {
+        final part = captured.parts[i];
+        _debug.record('LAB_MIC_PART_OK', {
+          'index': i + 1,
+          'frame_start': part.frameStart,
+          'frame_end': part.frameEnd,
+          'bytes': part.receipt.bytes,
+          'sha12': part.receipt.sha256.substring(0, 12),
+        });
+      }
+      setState(() {
+        _micSession = captured;
+        _status = 'Lab 麥克風已實際錄製 2 個 3 秒 WAV Part；'
+            ' 已綁定同一錄製 Session 的 0–96000 樣本序號。'
+            ' 這不是 Main Recorder 的全域 PTS。';
+      });
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('LAB_MIC_CAPTURE_HOLD', {'code': code});
+      if (mounted) setState(() {
+        _status = code == 'LAB_MIC_PERMISSION_REQUIRED_HOLD'
+          ? '請在系統權限對話框允許麥克風，再次手動按錄製。'
+            ' 授權後不會自動開始。'
+          : 'Lab 錄音 HOLD：$code';
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _verifyLabMicParts() async {
+    final session = _micSession;
+    if (_busy || session == null) return;
+    setState(() => _busy = true);
+    try {
+      await LabMicCapture.verify(session);
+      _debug.record('LAB_MIC_VERIFY_OK', {
+        'parts': session.parts.length,
+        'total_frames': session.parts.last.frameEnd,
+      });
+      if (mounted) setState(() => _status =
+          'Lab 原始 WAV SHA 與 0–96000 樣本序號重驗成功；'
+          '來源仍是獨立 Lab，而非 Main Recorder。');
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('LAB_MIC_VERIFY_HOLD', {'code': code});
+      if (mounted) setState(() => _status = 'Lab 錄音重驗 HOLD：$code');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -711,6 +784,46 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                     _partRoster[i].sha256.substring(0, 12) +
                     ' ｜邏輯 ' + _partRoster[i].logicalStartMs.toString() +
                     '–' + _partRoster[i].logicalEndMs.toString() + 'ms'),
+              ],
+            ),
+            const Divider(height: 24),
+            ExpansionTile(
+              key: const Key('lab-mic-recorder'),
+              title: const Text('LAB-1R｜真實麥克風 2-Part 來源測試'),
+              children: [
+                const Text('只有按下錄製才向系統要求麥克風權限；'
+                    '首次授權後需要再次點擊。全程在前景，本機'
+                    '單一 AudioRecord 連續擷取 6 秒，保留兩個實體 WAV'
+                    '（各 3 秒）。不呼叫 Groq／Gemini，不傳送錄音。'
+                    '原始 Part 留在獨立 Lab 私有資料夾，'
+                    '重驗與清除其他清單都不會刪檔。'),
+                FilledButton.tonal(
+                  key: const Key('lab-mic-capture'),
+                  onPressed: _busy ? null : _captureLabMicParts,
+                  child: const Text('明確開始 6 秒本機麥克風錄音'),
+                ),
+                OutlinedButton(
+                  key: const Key('lab-mic-verify'),
+                  onPressed: _busy || _micSession == null
+                      ? null : _verifyLabMicParts,
+                  child: const Text('重新驗證本次 Lab 錄音 Part SHA'),
+                ),
+                const Text('同一 Lab AudioRecord 的連續樣本序號'
+                  '僅代表本次實測錄製的來源順序；'
+                  '尚不能證明 Main Recorder 跨段 PTS 或'
+                  '1–2 小時連續錄音沒有遺失。'),
+                if (_micSession != null) ...[
+                  const Text('已建立本機 Lab 原始錄音 Session：2 個 WAV Part'),
+                  for (var i = 0; i < _micSession!.parts.length; i++)
+                    Text('Part ' + (i + 1).toString() +
+                        '：樣本 ' +
+                        _micSession!.parts[i].frameStart.toString() +
+                        '–' + _micSession!.parts[i].frameEnd.toString() +
+                        '；SHA12 ' +
+                        _micSession!.parts[i].receipt.sha256.substring(0, 12) +
+                        '；' +
+                        _micSession!.parts[i].receipt.bytes.toString() + ' B'),
+                ],
               ],
             ),
             const Divider(height: 24),

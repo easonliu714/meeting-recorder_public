@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# LAB v0.4.24+29: independent Android package, foreground-only Groq HTTP.
+# LAB v0.4.25+30: independent Android package, foreground-only Groq HTTP.
 # v0.3's launch package mismatch is a blocking regression contract.
 python3 -m unittest discover -s tool -p 'test_native_identity.py' -v
 flutter create --no-pub --platforms=android --project-name=groq_stt_lab \
-  --org=com.example.meeting_recorder.public_lab_v29 .
+  --org=com.example.meeting_recorder.public_lab_v30 .
 python3 - <<'PY'
 from pathlib import Path
-native = Path("android/app/src/main/kotlin/com/example/meeting_recorder/public_lab_v29/groq_stt_lab")
+native = Path("android/app/src/main/kotlin/com/example/meeting_recorder/public_lab_v30/groq_stt_lab")
 native.mkdir(parents=True, exist_ok=True)
-for name in ("MainActivity.kt", "GroqLabAudioDecoder.kt"):
+for name in ("MainActivity.kt", "GroqLabAudioDecoder.kt", "LabMicPartRecorder.kt"):
     source = Path("native") / name
     if not source.is_file():
         raise SystemExit("LAB_NATIVE_SOURCE_MISSING_" + name)
@@ -27,6 +27,9 @@ if 'android.permission.INTERNET' not in text:
         raise SystemExit('LAB_MANIFEST_APPLICATION_NOT_FOUND')
     text = text.replace(needle,
         '<uses-permission android:name="android.permission.INTERNET"/>\n    <application', 1)
-    m.write_text(text, encoding='utf-8')
+if 'android.permission.RECORD_AUDIO' not in text:
+    text = text.replace(needle,
+        '<uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <application', 1)
+m.write_text(text, encoding='utf-8')
 PY
 python3 tool/verify_android_identity.py android

@@ -20,6 +20,7 @@ def fixture(root: Path) -> Path:
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text("""<manifest xmlns:android="http://schemas.android.com/apk/res/android">
        <uses-permission android:name="android.permission.INTERNET"/>
+       <uses-permission android:name="android.permission.RECORD_AUDIO"/>
        <application><activity android:name=".MainActivity">
          <intent-filter>
            <action android:name="android.intent.action.MAIN"/>
@@ -33,6 +34,9 @@ def fixture(root: Path) -> Path:
         encoding="utf-8")
     (native / "GroqLabAudioDecoder.kt").write_text(
         f"package {EXPECTED_PACKAGE}\ninternal object GroqLabAudioDecoder {{}}\n",
+        encoding="utf-8")
+    (native / "LabMicPartRecorder.kt").write_text(
+        f"package {EXPECTED_PACKAGE}\ninternal object LabMicPartRecorder {{}}\n",
         encoding="utf-8")
     return android
 
@@ -58,7 +62,7 @@ class LauncherIdentityTests(unittest.TestCase):
     # A Private v20 package must never launch the independent Public v22 Lab.
     def test_private_v20_native_package_rejected_for_public_v22(self):
         self.assertEqual(
-            EXPECTED_PACKAGE, "com.example.meeting_recorder.public_lab_v29.groq_stt_lab"
+            EXPECTED_PACKAGE, "com.example.meeting_recorder.public_lab_v30.groq_stt_lab"
         )
         native = (self.android / "app/src/main/kotlin"
                   / Path(*EXPECTED_PACKAGE.split(".")) / "MainActivity.kt")
@@ -97,6 +101,22 @@ class LauncherIdentityTests(unittest.TestCase):
             encoding="utf-8")
         with self.assertRaisesRegex(
                 ValueError, "LAB_GROQ_INTERNET_PERMISSION_MISSING_OR_DUPLICATED"):
+            assert_launcher_identity(self.android)
+
+    def test_mic_permission_missing_fails_closed(self):
+        manifest = self.android / "app/src/main/AndroidManifest.xml"
+        manifest.write_text(manifest.read_text().replace(
+            '<uses-permission android:name="android.permission.RECORD_AUDIO"/>',
+            ''), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError,
+            "LAB_MICROPHONE_PERMISSION_MISSING_OR_DUPLICATED"):
+            assert_launcher_identity(self.android)
+
+    def test_missing_native_mic_capture_fails_closed(self):
+        native = (self.android / "app/src/main/kotlin"
+                  / Path(*EXPECTED_PACKAGE.split(".")))
+        (native / "LabMicPartRecorder.kt").unlink()
+        with self.assertRaisesRegex(ValueError, "LAB_NATIVE_FILE_MISSING_LABMICPARTRECORDER"):
             assert_launcher_identity(self.android)
 
     def test_missing_native_activity_fails_closed(self):

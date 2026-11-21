@@ -9,7 +9,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-EXPECTED_PACKAGE = "com.example.meeting_recorder.public_lab_v29.groq_stt_lab"
+EXPECTED_PACKAGE = "com.example.meeting_recorder.public_lab_v30.groq_stt_lab"
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 
 
@@ -38,6 +38,8 @@ def assert_launcher_identity(android_root: Path, package: str = EXPECTED_PACKAGE
                 document.findall("./uses-permission")]
     if internet.count("android.permission.INTERNET") != 1:
         raise ValueError("LAB_GROQ_INTERNET_PERMISSION_MISSING_OR_DUPLICATED")
+    if internet.count("android.permission.RECORD_AUDIO") != 1:
+        raise ValueError("LAB_MICROPHONE_PERMISSION_MISSING_OR_DUPLICATED")
 
     launcher_activities = []
     for activity in document.findall("./application/activity"):
@@ -53,7 +55,7 @@ def assert_launcher_identity(android_root: Path, package: str = EXPECTED_PACKAGE
         raise ValueError("LAB_LAUNCHER_MANIFEST_MISMATCH")
 
     location = android_root / "app/src/main/kotlin" / Path(*package.split("."))
-    for class_name in ("MainActivity", "GroqLabAudioDecoder"):
+    for class_name in ("MainActivity", "GroqLabAudioDecoder", "LabMicPartRecorder"):
         native = location / (class_name + ".kt")
         if not native.is_file():
             raise ValueError("LAB_NATIVE_FILE_MISSING_" + class_name.upper())

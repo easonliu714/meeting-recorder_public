@@ -1,11 +1,13 @@
-package com.example.meeting_recorder.public_lab_v29.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v30.groq_stt_lab
 
+import android.Manifest
+import android.content.pm.PackageManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
 
-/** Private offline Lab v0.2: no network calls, source deletion or API keys. */
+/** Public isolated Lab v30: no network calls, source deletion or API keys. */
 class MainActivity : FlutterActivity() {
     private val audioWorker = Executors.newSingleThreadExecutor()
 
@@ -13,6 +15,31 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
             "groq_stt_lab/offline_audio").setMethodCallHandler { call, result ->
+            if (call.method == "captureLabMicParts") {
+                // Never start microphone capture automatically after permission.
+                // An explicit second user tap is required on permission grant.
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 40130)
+                    result.error("LAB_MIC_PERMISSION_REQUIRED_HOLD",
+                        "Explicit user permission required", null)
+                    return@setMethodCallHandler
+                }
+                audioWorker.execute {
+                    try {
+                        val proof = LabMicPartRecorder.capture(applicationContext)
+                        runOnUiThread { result.success(proof) }
+                    } catch (error: Exception) {
+                        val code = error.message
+                            ?.takeIf { Regex("^[A-Z][A-Z0-9_]{1,63}$").matches(it) }
+                            ?: "LAB_MIC_CAPTURE_FAILURE_HOLD"
+                        runOnUiThread {
+                            result.error(code, "Local microphone capture held", null)
+                        }
+                    }
+                }
+                return@setMethodCallHandler
+            }
             if (call.method != "inspectAudio" && call.method != "decodeAudioWindow" &&
                 call.method != "inspectPartPts") {
                 result.notImplemented()
