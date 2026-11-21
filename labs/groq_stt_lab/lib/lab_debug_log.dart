@@ -8,9 +8,9 @@ import 'package:share_plus/share_plus.dart';
 /// Stable build identity shown to Owner and embedded in every exported log.
 final class LabBuildInfo {
   const LabBuildInfo._();
-  static const versionName = '0.4.25';
-  static const versionCode = 30;
-  static const applicationId = 'com.example.meeting_recorder.public_lab_v30.groq_stt_lab';
+  static const versionName = '0.4.26';
+  static const versionCode = 31;
+  static const applicationId = 'com.example.meeting_recorder.public_lab_v31.groq_stt_lab';
   static const sourceSha = String.fromEnvironment('LAB_BUILD_SHA', defaultValue: 'UNPINNED_LOCAL');
   static String get exportNameStem =>
       'groq_lab_v' + versionName.replaceAll('.', '_') +
@@ -82,6 +82,6 @@ final class LabDebugJournal {
     final output = File('${dir.path}${Platform.pathSeparator}${LabBuildInfo.exportNameStem}_$stamp.log');
     await output.writeAsString(snapshot(), encoding: utf8, flush: true);
     await Share.shareXFiles([XFile(output.path, mimeType: 'text/plain')],
-        subject: 'Groq Lab v0.4.25+30 diagnostic log');
+        subject: 'Groq Lab v0.4.26+31 diagnostic log');
   }
 }

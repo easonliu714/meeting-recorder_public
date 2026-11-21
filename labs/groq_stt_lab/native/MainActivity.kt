@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v30.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v31.groq_stt_lab
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -7,7 +7,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
 
-/** Public isolated Lab v30: no network calls, source deletion or API keys. */
+/** Public isolated Lab v31: no network calls, source deletion or API keys. */
 class MainActivity : FlutterActivity() {
     private val audioWorker = Executors.newSingleThreadExecutor()
 

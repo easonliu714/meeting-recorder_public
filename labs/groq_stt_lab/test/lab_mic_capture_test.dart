@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -5,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:groq_stt_lab/lab_audio_pipeline.dart';
 import 'package:groq_stt_lab/lab_mic_capture.dart';
+import 'package:groq_stt_lab/lab_mic_checkpoint.dart';
 
 Future<File> makeWav(File file, int seed) async {
   const frames = 48000;
@@ -164,5 +166,118 @@ void main() {
       throwsA(isA<PlatformException>().having((e) => e.code, 'code',
           'LAB_MIC_PERMISSION_REQUIRED_HOLD')),
     );
+  });
+
+  test('restart recovery reads two real app-private WAVs by SHA and frames',
+      () async {
+    const store = LabMicCheckpointStore();
+    final capture = await const LabMicCapture().capture(supportRoot: support);
+    final before1 = await LabAudioPipeline.digest(first);
+    final before2 = await LabAudioPipeline.digest(second);
+    await store.save(capture, supportRoot: support);
+    final recovered = await const LabMicCheckpointStore()
+        .restore(supportRoot: support);
+    expect(recovered.sessionId, session);
+    expect(recovered.parts.map((p) => p.frameStart), [0, 48000]);
+    expect(recovered.parts.map((p) => p.frameEnd), [48000, 96000]);
+    expect(recovered.parts.map((p) => p.receipt.bytes), [96044, 96044]);
+    await LabMicCapture.verify(recovered);
+    expect(await LabAudioPipeline.digest(first), before1);
+    expect(await LabAudioPipeline.digest(second), before2);
+  });
+
+  test('missing checkpoint and incomplete recorder session hold, retain WAV',
+      () async {
+    const store = LabMicCheckpointStore();
+    await expectLater(
+      store.restore(supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_CHECKPOINT_MISSING_HOLD')),
+    );
+    final parent = Directory('${support.path}/lab_mic_capture_v1');
+    await File('${parent.path}/latest_source_proof_v1.txt')
+        .writeAsString(session, flush: true);
+    await expectLater(store.restore(supportRoot: support),
+        throwsStateError);
+    expect(await first.exists() && await second.exists(), isTrue);
+  });
+
+  test('wrong pointer and forged session ID never escape local root',
+      () async {
+    const store = LabMicCheckpointStore();
+    final capture = await const LabMicCapture().capture(supportRoot: support);
+    await store.save(capture, supportRoot: support);
+    final pointer = File(
+      '${support.path}/lab_mic_capture_v1/latest_source_proof_v1.txt');
+    for (final forged in ['../escape', List.filled(36, 'x').join(), List.filled(30, 'invalid').join()]) {
+      await pointer.writeAsString(forged, flush: true);
+      await expectLater(store.restore(supportRoot: support),
+          throwsStateError);
+    }
+    await pointer.writeAsString(session, flush: true);
+    expect((await store.restore(supportRoot: support)).sessionId, session);
+  });
+
+  test('altered or truncated source is rejected without deleting original',
+      () async {
+    const store = LabMicCheckpointStore();
+    await store.save(
+      await const LabMicCapture().capture(supportRoot: support),
+      supportRoot: support,
+    );
+    final bytes = await second.readAsBytes();
+    bytes[51] ^= 1;
+    await second.writeAsBytes(bytes, flush: true);
+    await expectLater(
+      store.restore(supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_CHECKPOINT_SOURCE_HOLD')),
+    );
+    expect(await first.exists() && await second.exists(), isTrue);
+  });
+
+  test('manifest forged frames, file, ID and SHA fail closed',
+      () async {
+    const store = LabMicCheckpointStore();
+    await store.save(
+      await const LabMicCapture().capture(supportRoot: support),
+      supportRoot: support,
+    );
+    final manifest = File(
+      '${support.path}/lab_mic_capture_v1/$session/source_proof_v1.json');
+    final original = await manifest.readAsString();
+    for (final mutate in <void Function(Map<String, dynamic>)>[
+      (o) => (o['parts'] as List)[1]['frameStart'] = 47000,
+      (o) => (o['parts'] as List)[1]['index'] = 1,
+      (o) => (o['parts'] as List)[1]['file'] = '../part_02.wav',
+      (o) => (o['parts'] as List)[1]['sha256'] = List.filled(64, 'f').join(),
+      (o) => o['sessionId'] = 'deadbeef-0000-4444-8000-123456789abc',
+      (o) => o['sampleRate'] = 44100,
+      (o) => o['endedMonoNs'] = 9000000000,
+    ]) {
+      final json = Map<String, dynamic>.from(jsonDecode(original) as Map);
+      mutate(json);
+      await manifest.writeAsString(jsonEncode(json), flush: true);
+      await expectLater(store.restore(supportRoot: support), throwsStateError);
+    }
+    await manifest.writeAsString(original, flush: true);
+    expect((await store.restore(supportRoot: support)).parts, hasLength(2));
+  });
+
+  test('immutable receipt cannot be overwritten and original remains',
+      () async {
+    const store = LabMicCheckpointStore();
+    final captured = await const LabMicCapture().capture(supportRoot: support);
+    await store.save(captured, supportRoot: support);
+    final manifest = File(
+      '${support.path}/lab_mic_capture_v1/$session/source_proof_v1.json');
+    final digest = await LabAudioPipeline.digest(manifest);
+    await expectLater(
+      store.save(captured, supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_CHECKPOINT_EXISTS_HOLD')),
+    );
+    expect(await LabAudioPipeline.digest(manifest), digest);
+    expect(await first.exists() && await second.exists(), isTrue);
   });
 }

@@ -9,6 +9,7 @@ import 'lab_audio_pipeline.dart';
 import 'lab_part_roster.dart';
 import 'lab_part_native_pts.dart';
 import 'lab_mic_capture.dart';
+import 'lab_mic_checkpoint.dart';
 import 'lab_debug_log.dart';
 import 'lab_groq_free_usage_monitor.dart';
 import 'lab_groq_stt_panel.dart';
@@ -43,6 +44,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   final _pipeline = const LabAudioPipeline();
   final _nativePartPts = const LabPartNativePtsScanner();
   final _micRecorder = const LabMicCapture();
+  final _micCheckpoints = const LabMicCheckpointStore();
   final _debug = LabDebugJournal();
   final _freeMonitor = LabGroqFreeUsageMonitor();
   int _mockFreeResponseSerial = 0;
@@ -73,7 +75,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.25+30', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.26+31', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -290,7 +292,11 @@ class _GroqLabHomeState extends State<GroqLabHome> {
     _debug.record('LAB_MIC_CAPTURE_START', {'parts': 2, 'seconds': 6});
     try {
       final captured = await _micRecorder.capture();
+      await _micCheckpoints.save(captured);
       if (!mounted) return;
+      _debug.record('LAB_MIC_CHECKPOINT_SAVED', {
+        'parts': captured.parts.length, 'total_frames': 96000,
+      });
       _debug.record('LAB_MIC_CAPTURE_OK', {
         'parts': captured.parts.length,
         'total_frames': 96000,
@@ -321,6 +327,38 @@ class _GroqLabHomeState extends State<GroqLabHome> {
             ' 授權後不會自動開始。'
           : 'Lab 錄音 HOLD：$code';
       });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Manual opt-in on the *same v31 Lab package* after app restart.
+  // Re-reads immutable proof and both physical WAVs; never starts a recorder.
+  Future<void> _restoreLabMicCheckpoint() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _micSession = null;
+      _status = '只讀驗證重開後保留的 Lab 來源證據…';
+    });
+    _debug.record('LAB_MIC_CHECKPOINT_RESTORE_START');
+    try {
+      final restored = await _micCheckpoints.restore();
+      if (!mounted) return;
+      _debug.record('LAB_MIC_CHECKPOINT_RESTORE_OK', {
+        'parts': restored.parts.length,
+        'total_frames': restored.parts.last.frameEnd,
+      });
+      setState(() {
+        _micSession = restored;
+        _status = '已從同版 App 私有儲存恢復兩個真實 WAV Part，'
+            '並重新核對 SHA 與 0–96000 樣本序號。'
+            '這不是 Main Recorder 的全域 PTS。';
+      });
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('LAB_MIC_CHECKPOINT_RESTORE_HOLD', {'code': code});
+      if (mounted) setState(() => _status = '重啟恢復驗證 HOLD：$code');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -956,6 +994,16 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                       ? null : _verifyLabMicParts,
                   child: const Text('重新驗證本次 Lab 錄音 Part SHA'),
                 ),
+                OutlinedButton(
+                  key: const Key('lab-mic-restore'),
+                  onPressed: _busy ? null : _restoreLabMicCheckpoint,
+                  child: const Text('App 重啟後，手動恢復上次錄音證據'),
+                ),
+                const Text('錄製成功後建立不可覆寫的來源證據；'
+                    '同一 v31 App 關閉再開啟後，只有按下恢復'
+                    '才讀回檔案與比對 SHA。缺少、修改或不完整'
+                    '證據一律 HOLD，不刪除原始 WAV。'
+                    '不同 Lab 版本的獨立 App ID 不共用私有資料。'),
                 const Text('同一 Lab AudioRecord 的連續樣本序號'
                   '僅代表本次實測錄製的來源順序；'
                   '尚不能證明 Main Recorder 跨段 PTS 或'
