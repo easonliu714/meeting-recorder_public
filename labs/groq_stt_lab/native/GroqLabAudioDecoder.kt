@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v28.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v29.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -149,6 +149,106 @@ internal object GroqLabAudioDecoder {
                 "sampleRate" to rate,
                 "channels" to channels,
                 "sourceBytes" to source.length()
+            )
+        } finally {
+            extractor.release()
+        }
+    }
+
+    /**
+     * Actual Android MediaExtractor encoded packet sampleTime observation.
+     * This is SOURCE-LOCAL PTS only, not Recorder session/global/acoustic
+     * proof. No PCM decoding, network or modification of source media.
+     */
+    fun inspectSourcePts(sourcePath: String): Map<String, Any> {
+        val source = File(sourcePath).canonicalFile
+        require(source.isFile && source.canRead() && source.length() > 0L) {
+            "LAB_PART_NATIVE_PTS_SOURCE_HOLD"
+        }
+        val bytesBefore = source.length()
+        val modifiedBefore = source.lastModified()
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(source.path)
+            var audioTrack = -1
+            var selected: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val candidate = extractor.getTrackFormat(i)
+                if ((candidate.getString(MediaFormat.KEY_MIME) ?: "")
+                    .startsWith("audio/")) {
+                    require(audioTrack == -1) { "LAB_PART_NATIVE_PTS_MULTI_TRACK_HOLD" }
+                    audioTrack = i
+                    selected = candidate
+                }
+            }
+            val format = requireNotNull(selected) {
+                "LAB_PART_NATIVE_PTS_TRACK_MISSING_HOLD"
+            }
+            val mime = requireNotNull(format.getString(MediaFormat.KEY_MIME))
+            require(mime == "audio/mp4a-latm" || mime == "audio/mpeg") {
+                "LAB_PART_NATIVE_PTS_CODEC_HOLD"
+            }
+            require(format.containsKey(MediaFormat.KEY_DURATION) &&
+                    format.containsKey(MediaFormat.KEY_SAMPLE_RATE) &&
+                    format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                "LAB_PART_NATIVE_PTS_METADATA_HOLD"
+            }
+            val duration = format.getLong(MediaFormat.KEY_DURATION)
+            val rate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            require(duration in 10_000L..7_200_000_000L &&
+                    rate in 8000..48000 && channels in 1..2) {
+                "LAB_PART_NATIVE_PTS_METADATA_HOLD"
+            }
+            extractor.selectTrack(audioTrack)
+            var first = -1L
+            var last = -1L
+            var maxGap = 0L
+            var packets = 0L
+            while (true) {
+                val pts = extractor.sampleTime
+                if (pts < 0L) break
+                require(extractor.sampleTrackIndex == audioTrack) {
+                    "LAB_PART_NATIVE_PTS_TRACK_DRIFT_HOLD"
+                }
+                require(pts <= duration + 500_000L) {
+                    "LAB_PART_NATIVE_PTS_OUT_OF_RANGE_HOLD"
+                }
+                require(last < 0L || pts > last) {
+                    "LAB_PART_NATIVE_PTS_NON_MONOTONIC_HOLD"
+                }
+                if (last >= 0L) {
+                    val gap = pts - last
+                    require(gap <= 1_000_000L) {
+                        "LAB_PART_NATIVE_PTS_GAP_HOLD"
+                    }
+                    maxGap = maxOf(maxGap, gap)
+                } else {
+                    first = pts
+                }
+                last = pts
+                packets++
+                require(packets <= 750_000L) {
+                    "LAB_PART_NATIVE_PTS_PACKET_LIMIT_HOLD"
+                }
+                if (!extractor.advance()) break
+            }
+            require(packets >= 2L && last > first) {
+                "LAB_PART_NATIVE_PTS_EMPTY_HOLD"
+            }
+            require(source.length() == bytesBefore &&
+                    source.lastModified() == modifiedBefore) {
+                "LAB_PART_NATIVE_PTS_SOURCE_CHANGED_HOLD"
+            }
+            return mapOf(
+                "mime" to mime,
+                "durationUs" to duration,
+                "sampleRate" to rate,
+                "sourceBytes" to bytesBefore,
+                "firstPtsUs" to first,
+                "lastPtsUs" to last,
+                "sampleCount" to packets,
+                "maxGapUs" to maxGap
             )
         } finally {
             extractor.release()

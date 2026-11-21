@@ -2,6 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:groq_stt_lab/lab_debug_log.dart';
 
 void main() {
+  test('exported filename is derived from actual APK identity', () {
+    expect(LabBuildInfo.exportNameStem, 'groq_lab_v0_4_24_build29');
+  });
+
   test('exported diagnostic is versioned, bounded and never includes paths', () {
     final journal = LabDebugJournal();
     journal.record('SOURCE_PROBE_OK',
@@ -9,9 +13,9 @@ void main() {
     journal.record('SOURCE_PROBE_HOLD',
         {'code': 'LAB_AUDIO_UNSUPPORTED_CODEC', 'token': 'Bearer secret'});
     final text = journal.snapshot();
-    expect(text, contains('build_version=0.4.23+28'));
+    expect(text, contains('build_version=0.4.24+29'));
     expect(text, contains('source_commit='));
-    expect(text, contains('app_id=com.example.meeting_recorder.public_lab_v28.groq_stt_lab'));
+    expect(text, contains('app_id=com.example.meeting_recorder.public_lab_v29.groq_stt_lab'));
     expect(text, contains('SOURCE_PROBE_OK'));
     expect(text, contains('code=LAB_AUDIO_UNSUPPORTED_CODEC'));
     expect(text, contains('path=REDACTED'));

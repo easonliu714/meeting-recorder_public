@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v28.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v29.groq_stt_lab
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,7 +13,8 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
             "groq_stt_lab/offline_audio").setMethodCallHandler { call, result ->
-            if (call.method != "inspectAudio" && call.method != "decodeAudioWindow") {
+            if (call.method != "inspectAudio" && call.method != "decodeAudioWindow" &&
+                call.method != "inspectPartPts") {
                 result.notImplemented()
                 return@setMethodCallHandler
             }
@@ -31,10 +32,10 @@ class MainActivity : FlutterActivity() {
             }
             audioWorker.execute {
                 try {
-                    val output = if (call.method == "inspectAudio") {
-                        GroqLabAudioDecoder.inspectSource(sourcePath)
-                    } else {
-                        GroqLabAudioDecoder.decodeWindow(
+                    val output = when (call.method) {
+                        "inspectAudio" -> GroqLabAudioDecoder.inspectSource(sourcePath)
+                        "inspectPartPts" -> GroqLabAudioDecoder.inspectSourcePts(sourcePath)
+                        else -> GroqLabAudioDecoder.decodeWindow(
                             applicationContext, sourcePath,
                             requireNotNull(startMs), requireNotNull(endMs))
                     }

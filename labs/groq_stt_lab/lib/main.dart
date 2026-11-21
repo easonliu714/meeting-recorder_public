@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'lab_audio_pipeline.dart';
 import 'lab_part_roster.dart';
+import 'lab_part_native_pts.dart';
 import 'lab_debug_log.dart';
 import 'lab_groq_free_usage_monitor.dart';
 import 'lab_groq_stt_panel.dart';
@@ -39,6 +40,7 @@ class GroqLabHome extends StatefulWidget {
 
 class _GroqLabHomeState extends State<GroqLabHome> {
   final _pipeline = const LabAudioPipeline();
+  final _nativePartPts = const LabPartNativePtsScanner();
   final _debug = LabDebugJournal();
   final _freeMonitor = LabGroqFreeUsageMonitor();
   int _mockFreeResponseSerial = 0;
@@ -49,6 +51,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   String _status = '預設離線；真實 Groq STT 僅在逐段明確同意後呼叫。';
   List<LabStagedChunk> _chunks = const [];
   final List<LabPartReceipt> _partRoster = [];
+  List<LabPartNativePtsReceipt> _partPtsResults = const [];
   bool _busy = false;
   bool _stagingAudio = false;
   bool _cancelStagingRequested = false;
@@ -67,7 +70,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.23+28', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.24+29', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -174,6 +177,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
       });
       setState(() {
         _partRoster.add(receipt);
+        _partPtsResults = const [];
         _status = '已加入 ' + _partRoster.length.toString() +
             ' 個來源 Part，未修改原檔。';
       });
@@ -232,10 +236,50 @@ class _GroqLabHomeState extends State<GroqLabHome> {
     }
   }
 
+  /// SHA-bound encoded packet timestamps from the selected MP3/M4A files.
+  /// All PTS remain source-local and never imply cross-Part global time.
+  Future<void> _scanNativePartPts() async {
+    if (_busy || _partRoster.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _partPtsResults = const [];
+      _status = '掃描 Android 壓縮音檔本機封包 PTS…';
+    });
+    _debug.record('PART_NATIVE_PTS_START', {'parts': _partRoster.length});
+    try {
+      final results = await _nativePartPts.scan(_partRoster);
+      if (!mounted) return;
+      for (final receipt in results) {
+        _debug.record('PART_NATIVE_PTS_OK', {
+          'index': receipt.index,
+          'kind': receipt.kind.name,
+          'sha12': receipt.sha256.substring(0, 12),
+          'first_pts_us': receipt.firstPtsUs,
+          'last_pts_us': receipt.lastPtsUs,
+          'packets': receipt.sampleCount,
+          'max_gap_us': receipt.maxGapUs,
+        });
+      }
+      setState(() {
+        _partPtsResults = results;
+        _status = '已讀取 ' + results.length.toString() +
+            ' 個來源檔封包 PTS；僅屬音檔內本機時間，'
+            '不是 Recorder 跨 Part 全域時間戳。';
+      });
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('PART_NATIVE_PTS_HOLD', {'code': code});
+      if (mounted) setState(() => _status = '來源封包 PTS HOLD：' + code);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   void _clearRecorderParts() {
     if (_busy) return;
     setState(() {
       _partRoster.clear();
+      _partPtsResults = const [];
       _status = '已清除記憶體中的 Part 清單，原始音檔不變。';
     });
     _debug.record('PART_ROSTER_CLEAR');
@@ -637,6 +681,21 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                 const Text('僅適用於原本預期共享 2 秒樣本的 PCM16 WAV。'
                     '一般 Recorder 分段未必有重疊；HOLD 不等於損壞，'
                     '且不是全域時間戳證明。'),
+                OutlinedButton(
+                  key: const Key('part-roster-native-pts'),
+                  onPressed: _busy || _partRoster.isEmpty
+                      ? null : _scanNativePartPts,
+                  child: const Text('掃描已選 MP3／M4A 本機封包 PTS'),
+                ),
+                const Text('來源本機 PTS 是 Android MediaExtractor '
+                    '對每個壓縮音檔讀出的封包時間；只支援 MP3／M4A。'
+                    'WAV 會安全 HOLD，不能推導 Recorder 跨段 PTS。'),
+                for (final r in _partPtsResults)
+                  Text('Part ' + r.index.toString() + ' ' + r.kind.name +
+                    ' ｜首末 PTS ' + r.firstPtsUs.toString() + '–' +
+                    r.lastPtsUs.toString() + 'us' +
+                    '；封包 ' + r.sampleCount.toString() +
+                    '；最大間隔 ' + r.maxGapUs.toString() + 'us'),
                 OutlinedButton(
                   key: const Key('part-roster-clear'),
                   onPressed: _busy || _partRoster.isEmpty
