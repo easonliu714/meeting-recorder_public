@@ -201,23 +201,28 @@ internal object GroqLabAudioDecoder {
                 "LAB_PART_NATIVE_PTS_METADATA_HOLD"
             }
             extractor.selectTrack(audioTrack)
-            var first = -1L
-            var last = -1L
+            var first = Long.MIN_VALUE
+            var last = Long.MIN_VALUE
             var maxGap = 0L
             var packets = 0L
             while (true) {
-                val pts = extractor.sampleTime
-                if (pts < 0L) break
-                require(extractor.sampleTrackIndex == audioTrack) {
+                // MediaExtractor.sampleTrackIndex identifies end-of-stream.
+                // A real AAC priming packet may carry negative source PTS:
+                // retain the physical timestamp, never pad/normalize PCM.
+                val trackIndex = extractor.sampleTrackIndex
+                if (trackIndex < 0) break
+                require(trackIndex == audioTrack) {
                     "LAB_PART_NATIVE_PTS_TRACK_DRIFT_HOLD"
                 }
-                require(pts <= duration + 500_000L) {
+                val pts = extractor.sampleTime
+                require(pts != -1L && pts >= -130_000L &&
+                        pts <= duration + 500_000L) {
                     "LAB_PART_NATIVE_PTS_OUT_OF_RANGE_HOLD"
                 }
-                require(last < 0L || pts > last) {
+                require(last == Long.MIN_VALUE || pts > last) {
                     "LAB_PART_NATIVE_PTS_NON_MONOTONIC_HOLD"
                 }
-                if (last >= 0L) {
+                if (last != Long.MIN_VALUE) {
                     val gap = pts - last
                     require(gap <= 1_000_000L) {
                         "LAB_PART_NATIVE_PTS_GAP_HOLD"

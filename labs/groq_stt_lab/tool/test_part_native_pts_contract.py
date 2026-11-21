@@ -16,6 +16,7 @@ class NativePartPtsContract(unittest.TestCase):
         part = part.split("fun decodeWindow(", 1)[0]
         for token in ("MediaExtractor()", "extractor.sampleTime",
                       "extractor.sampleTrackIndex", "extractor.advance()",
+                      "pts >= -130_000L", "Long.MIN_VALUE",
                       "LAB_PART_NATIVE_PTS_NON_MONOTONIC_HOLD",
                       "LAB_PART_NATIVE_PTS_GAP_HOLD",
                       "LAB_PART_NATIVE_PTS_PACKET_LIMIT_HOLD",
@@ -33,6 +34,7 @@ class NativePartPtsContract(unittest.TestCase):
                       "firstPtsUs", "lastPtsUs", "maxGapUs",
                       "LAB_PART_NATIVE_PTS_WAV_UNSUPPORTED_HOLD"):
             self.assertIn(token, DART)
+        self.assertIn("first < -130000", DART)
         self.assertIn("PART_NATIVE_PTS_OK", UI)
         self.assertIn("PART_NATIVE_PTS_HOLD", UI)
         self.assertNotIn("'source_path':", UI)

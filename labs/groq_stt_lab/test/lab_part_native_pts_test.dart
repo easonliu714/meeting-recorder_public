@@ -61,6 +61,15 @@ void main() {
     expect(await LabAudioPipeline.digest(file), sha);
   });
 
+  test('AAC encoder priming negative first PTS remains raw, not invented zero',
+      () async {
+    native['firstPtsUs'] = -23220;
+    native['lastPtsUs'] = 14976871;
+    final found = await const LabPartNativePtsScanner().scan([part]);
+    expect(found.single.firstPtsUs, -23220);
+    expect(found.single.maxGapUs, 24000);
+  });
+
   test('native forged MIME, bytes, clock, count, gaps all HOLD', () async {
     const scanner = LabPartNativePtsScanner();
     for (final bad in [
@@ -68,7 +77,7 @@ void main() {
       {'sourceBytes': 6},
       {'durationUs': 14000000},
       {'sampleRate': 96000},
-      {'firstPtsUs': -1},
+      {'firstPtsUs': -250000},
       {'lastPtsUs': 0},
       {'lastPtsUs': 19000000},
       {'sampleCount': 1},

@@ -74,7 +74,7 @@ final class LabPartNativePtsScanner {
           durationUs ~/ 1000 != part.durationMs ||
           durationUs <= 0 || durationUs > 7200000000 ||
           rate < 8000 || rate > 48000 ||
-          first < 0 || last <= first ||
+          first < -130000 || last <= first ||
           last > durationUs + 500000 ||
           count < 2 || count > maxPackets ||
           maxGap <= 0 || maxGap > 1000000 ||
