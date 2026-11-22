@@ -1,4 +1,4 @@
-name: Public Groq STT Lab v0.4.27+32 isolated Debug APK
+name: Public Groq STT Lab Gate A source-only regression
 on:
   push:
     branches:
@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
+      LAB_BUILD_MODE: source_only
       EXPECTED_APP_ID: com.example.meeting_recorder.public_lab_v32.groq_stt_lab
       PUBLIC_BASE_HEAD: c0c993c00c72e79b9b72697b4b2205b66168f026
       V21_HEAD: 710e0df35d02dd6c0883db68bb34db66174c427c
@@ -99,6 +100,14 @@ jobs:
           cache: true
           pub-cache: true
 
+      - name: Run Gate A committed multi-Part JVM byte regression
+        working-directory: labs/groq_stt_lab
+        run: |
+          set -euo pipefail
+          command -v kotlinc
+          kotlinc native/LabMultiPartProof.kt tool/host_tests/LabMultiPartProofHostTest.kt -include-runtime -d /tmp/lab-multipart-host.jar
+          java -jar /tmp/lab-multipart-host.jar
+
       - name: Run identity/PCM fail-closed regression then generate Android
         working-directory: labs/groq_stt_lab
         run: |
@@ -116,15 +125,22 @@ jobs:
           flutter analyze
           flutter test
 
-      - name: Compile native MediaCodec and build isolated Debug APK
+      - name: Compile native MediaCodec and committed multi-Part core
         working-directory: labs/groq_stt_lab
         run: |
           set -euo pipefail
           (cd android && ./gradlew :app:compileDebugKotlin --no-daemon --console=plain)
+
+      - name: Build isolated Debug APK only for delivery
+        if: env.LAB_BUILD_MODE == 'delivery'
+        working-directory: labs/groq_stt_lab
+        run: |
+          set -euo pipefail
           flutter build apk --debug --no-pub --build-name=0.4.27 --build-number=32 --dart-define=LAB_BUILD_SHA="$GITHUB_SHA"
           test -s build/app/outputs/flutter-apk/app-debug.apk
 
       - name: APK identity, DEX, privacy signer and SHA256 provenance
+        if: env.LAB_BUILD_MODE == 'delivery'
         working-directory: labs/groq_stt_lab
         run: |
           set -euo pipefail
@@ -174,6 +190,7 @@ jobs:
           cat out/public-v032-provenance.txt
 
       - name: Upload only checked Debug APK and sanitized provenance (5 days)
+        if: env.LAB_BUILD_MODE == 'delivery'
         uses: actions/upload-artifact@v4
         with:
           name: public-groq-lab-v032-debug
@@ -182,12 +199,14 @@ jobs:
           if-no-files-found: error
 
       - name: Read back exact uploaded Artifact ZIP and verify APK
+        if: env.LAB_BUILD_MODE == 'delivery'
         uses: actions/download-artifact@v4
         with:
           name: public-groq-lab-v032-debug
           path: labs/groq_stt_lab/readback/
 
       - name: Confirm downloaded APK CRC and byte identity
+        if: env.LAB_BUILD_MODE == 'delivery'
         working-directory: labs/groq_stt_lab
         run: |
           set -euo pipefail

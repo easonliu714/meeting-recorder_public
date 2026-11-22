@@ -10,7 +10,7 @@ python3 - <<'PY'
 from pathlib import Path
 native = Path("android/app/src/main/kotlin/com/example/meeting_recorder/public_lab_v32/groq_stt_lab")
 native.mkdir(parents=True, exist_ok=True)
-for name in ("MainActivity.kt", "GroqLabAudioDecoder.kt", "LabMicPartRecorder.kt"):
+for name in ("MainActivity.kt", "GroqLabAudioDecoder.kt", "LabMicPartRecorder.kt", "LabMultiPartProof.kt"):
     source = Path("native") / name
     if not source.is_file():
         raise SystemExit("LAB_NATIVE_SOURCE_MISSING_" + name)
