@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v33.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v34.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -110,6 +110,22 @@ fun main() {
             val r=LabMultiPartProof(d,id).recoverSnapshot()
             check(!r.finished && r.receipts.size==1)
             check(File(d,"part_000002_inflight.pcm").length()==4L)
+        }
+        case("hardlink IO refused keeps immutable WAV and no receipt") { d,id,_ ->
+            val f=wav(d,1,48000,1)
+            val j=LabMultiPartProof(d,id,{_,_->throw java.io.IOException("sensitive sandbox path")})
+            val e=runCatching{j.commit(1)}.exceptionOrNull()
+            check(e?.message=="LAB_MULTI_HARDLINK_IO_HOLD")
+            check(f.exists() && !File(d,"part_000001.commit").exists())
+            reject{LabMultiPartProof(d,id).recover()}
+            check(d.listFiles()!!.any{it.name.endsWith(".tmp")})
+        }
+        case("hardlink unsupported keeps original data and no commit") { d,id,_ ->
+            val f=wav(d,1,48000,1)
+            val j=LabMultiPartProof(d,id,{_,_->throw UnsupportedOperationException("unsupported")})
+            val e=runCatching{j.commit(1)}.exceptionOrNull()
+            check(e?.message=="LAB_MULTI_HARDLINK_UNSUPPORTED_HOLD")
+            check(f.exists() && !File(d,"part_000001.commit").exists())
         }
         println("HOST_REGRESSION=$count/$count PASS")
     } finally { base.deleteRecursively() }

@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v33.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v34.groq_stt_lab
 
 import java.io.File
 import java.io.FileOutputStream
@@ -14,11 +14,22 @@ import java.util.UUID
  * Requires java.nio.file support (Android API 26+ before use).
  * The sample ledger is not a hardware PTS or power-loss attestation.
  */
-internal class LabMultiPartProof(private val folder: File, private val session: UUID) {
+internal class LabMultiPartProof(private val folder: File, private val session: UUID,
+    private val hardLink: (File, File) -> Unit = { target, source ->
+        Files.createLink(target.toPath(), source.toPath())
+        Unit
+    }) {
     data class Receipt(val index: Int, val start: Long, val end: Long, val bytes: Long, val sha: String)
     data class Recovery(val receipts: List<Receipt>, val finished: Boolean)
     private val maxParts = 128
     private fun requireSafe(ok: Boolean) = check(ok) { "LAB_MULTI_PART_PROOF_HOLD" }
+    // No raw IOException messages (which may contain sandbox paths) leave the native layer.
+    private fun <T> atPhase(code: String, action: () -> T): T {
+        return try { action() } catch (error: Exception) {
+            if (error.message?.matches(Regex("^LAB_[A-Z0-9_]{2,55}_HOLD$")) == true) throw error
+            throw IllegalStateException(code, error)
+        }
+    }
     private fun root(): File {
         requireSafe(folder.name == session.toString() && folder.absoluteFile == folder.canonicalFile && folder.isDirectory)
         return folder
@@ -92,10 +103,25 @@ internal class LabMultiPartProof(private val folder: File, private val session: 
     private fun publish(dest: File, text: String) {
         requireSafe(!present(dest))
         val tmp = file("${dest.name}.${UUID.randomUUID()}.tmp")
-        requireSafe(tmp.createNewFile())
-        FileOutputStream(tmp).use { it.write(text.toByteArray(Charsets.US_ASCII)); it.fd.sync() }
-        Files.createLink(dest.toPath(), tmp.toPath())
-        Files.delete(tmp.toPath())
+        atPhase("LAB_MULTI_RECEIPT_CREATE_HOLD") {
+            requireSafe(tmp.createNewFile())
+        }
+        atPhase("LAB_MULTI_RECEIPT_FSYNC_HOLD") {
+            FileOutputStream(tmp).use { it.write(text.toByteArray(Charsets.US_ASCII)); it.fd.sync() }
+        }
+        // This is exclusive hard-link publication, NOT an unsafe rename fallback.
+        try {
+            hardLink(dest, tmp)
+        } catch (error: java.nio.file.FileAlreadyExistsException) {
+            throw IllegalStateException("LAB_MULTI_RECEIPT_EXISTS_HOLD", error)
+        } catch (error: UnsupportedOperationException) {
+            throw IllegalStateException("LAB_MULTI_HARDLINK_UNSUPPORTED_HOLD", error)
+        } catch (error: java.io.IOException) {
+            throw IllegalStateException("LAB_MULTI_HARDLINK_IO_HOLD", error)
+        } catch (error: Exception) {
+            throw IllegalStateException("LAB_MULTI_HARDLINK_RUNTIME_HOLD", error)
+        }
+        atPhase("LAB_MULTI_RECEIPT_CLEANUP_HOLD") { Files.delete(tmp.toPath()) }
     }
 
     /** Only the recorder's explicit normal finalization may publish a terminal marker. */
@@ -114,10 +140,10 @@ internal class LabMultiPartProof(private val folder: File, private val session: 
         requireSafe(!present(terminal()))
         val prior = scan()
         requireSafe(index == prior.size + 1 && index <= maxParts)
-        val receipt = inspect(index, prior.lastOrNull()?.end ?: 0L)
+        val receipt = atPhase("LAB_MULTI_WAV_INSPECT_HOLD") { inspect(index, prior.lastOrNull()?.end ?: 0L) }
         val dest = file(stem(index) + ".commit")
         publish(dest, encode(receipt))
-        requireSafe(recover().lastOrNull() == receipt)
+        atPhase("LAB_MULTI_RECEIPT_READBACK_HOLD") { requireSafe(recover().lastOrNull() == receipt) }
         return receipt
     }
 }
@@ -141,6 +167,12 @@ internal class LabMultiPartSink(
     init { require(partBytes in 2..115200000 && partBytes % 2 == 0 && partLimit in 1..128) }
     private fun stem() = "part_%06d".format(java.util.Locale.ROOT,index)
     private fun ensureSpace() = check(spaceOk()) { "LAB_MULTI_STORAGE_HOLD" }
+    private fun <T> atPhase(code:String, action:()->T):T {
+        return try { action() } catch(error:Exception) {
+            if(error.message?.matches(Regex("^LAB_[A-Z0-9_]{2,55}_HOLD$"))==true) throw error
+            throw IllegalStateException(code,error)
+        }
+    }
     private fun open() {
         check(!ended && index <= partLimit)
         ensureSpace()
@@ -151,25 +183,29 @@ internal class LabMultiPartSink(
     private fun seal() {
         check(written>0 && written%2==0)
         val f=requireNotNull(raw)
-        requireNotNull(output).let { it.fd.sync(); it.close() }
+        atPhase("LAB_MULTI_RAW_FSYNC_HOLD") {
+            requireNotNull(output).let { it.fd.sync(); it.close() }
+        }
         output=null
         check(f.length()==written.toLong()) { "LAB_MULTI_SIZE_HOLD" }
         ensureSpace()
         val wav=File(folder,stem()+".wav")
-        check(wav.createNewFile()) { "LAB_MULTI_EXISTS_HOLD" }
+        atPhase("LAB_MULTI_WAV_CREATE_HOLD") { check(wav.createNewFile()) { "LAB_MULTI_EXISTS_HOLD" } }
         val b=ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
         fun tag(s:String) { b.put(s.toByteArray(Charsets.US_ASCII)) }
         tag("RIFF"); b.putInt(36+written); tag("WAVE"); tag("fmt "); b.putInt(16)
         b.putShort(1); b.putShort(1); b.putInt(16000); b.putInt(32000)
         b.putShort(2); b.putShort(16); tag("data"); b.putInt(written)
-        FileOutputStream(wav).use { out ->
-            out.write(b.array())
-            f.inputStream().use { input ->
-                check(input.copyTo(out)==written.toLong()) { "LAB_MULTI_SIZE_HOLD" }
+        atPhase("LAB_MULTI_WAV_FSYNC_HOLD") {
+            FileOutputStream(wav).use { out ->
+                out.write(b.array())
+                f.inputStream().use { input ->
+                    check(input.copyTo(out)==written.toLong()) { "LAB_MULTI_SIZE_HOLD" }
+                }
+                out.fd.sync()
             }
-            out.fd.sync()
         }
-        val receipt=proof.commit(index)
+        val receipt=atPhase("LAB_MULTI_RECEIPT_COMMIT_HOLD") { proof.commit(index) }
         check(receipt.bytes==written.toLong()+44L)
         onCommit(index)
         index++;written=0;raw=null

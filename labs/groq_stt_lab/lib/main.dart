@@ -89,7 +89,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.28+33', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.29+34', 'git': LabBuildInfo.sourceSha});
   }
 
   @override
@@ -1187,7 +1187,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                   child: const Text('App 重啟後，手動恢復上次錄音證據'),
                 ),
                 const Text('錄製成功後建立不可覆寫的來源證據；'
-                    '同一 v33 App 關閉再開啟後，只有按下恢復'
+                    '同一 v34 App 關閉再開啟後，只有按下恢復'
                     '才讀回檔案與比對 SHA。缺少、修改或不完整'
                     '證據一律 HOLD，不刪除原始 WAV。'
                     '不同 Lab 版本的獨立 App ID 不共用私有資料。'),

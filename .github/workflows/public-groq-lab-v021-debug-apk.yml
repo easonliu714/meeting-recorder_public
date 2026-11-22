@@ -1,4 +1,4 @@
-name: Public Groq STT Lab v0.4.28+33 Gate A Debug APK
+name: Public Groq STT Lab v0.4.29+34 Gate A Debug APK
 on:
   push:
     branches:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: public-groq-lab-v033-exact-head
+  group: public-groq-lab-v034-exact-head
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 55
     env:
       LAB_BUILD_MODE: delivery
-      EXPECTED_APP_ID: com.example.meeting_recorder.public_lab_v33.groq_stt_lab
+      EXPECTED_APP_ID: com.example.meeting_recorder.public_lab_v34.groq_stt_lab
       PUBLIC_BASE_HEAD: c0c993c00c72e79b9b72697b4b2205b66168f026
       V21_HEAD: 710e0df35d02dd6c0883db68bb34db66174c427c
       MAIN_PRIVATE_SIGNER: 211EBB33C98359E8F49F0423231826DF22B04643BE418754C939ECB2FFC1435D
@@ -81,7 +81,7 @@ jobs:
           assert (root/'tool/test_pcm_diagnostics_contract.py').is_file()
           assert 'PUBLIC_LAB_TEST_TOKEN_1234567890' in (
               root/'test/lab_groq_free_stt_transport_test.dart').read_text()
-          assert 'public_lab_v33' in (
+          assert 'public_lab_v34' in (
               root/'tool/verify_android_identity.py').read_text()
           print('PUBLIC_LAB_ALLOWLIST_AND_SENSITIVE_SCAN_PASS', len(all_lab_files))
           PY
@@ -136,7 +136,7 @@ jobs:
         working-directory: labs/groq_stt_lab
         run: |
           set -euo pipefail
-          flutter build apk --debug --no-pub --build-name=0.4.28 --build-number=33 --dart-define=LAB_BUILD_SHA="$GITHUB_SHA"
+          flutter build apk --debug --no-pub --build-name=0.4.29 --build-number=34 --dart-define=LAB_BUILD_SHA="$GITHUB_SHA"
           test -s build/app/outputs/flutter-apk/app-debug.apk
 
       - name: APK identity, DEX, privacy signer and SHA256 provenance
@@ -148,37 +148,37 @@ jobs:
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
           signer="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           test -x "$aapt" && test -x "$signer"
-          "$signer" verify --verbose --print-certs "$apk" > /tmp/public-v033-signer.txt
-          grep -Eq '^Verified using v[23] scheme.*true|^Verifies$' /tmp/public-v033-signer.txt
-          "$aapt" dump badging "$apk" > /tmp/public-v033-badging.txt
-          grep -Fq "name='$EXPECTED_APP_ID'" /tmp/public-v033-badging.txt
-          grep -Fq "versionName='0.4.28'" /tmp/public-v033-badging.txt
-          grep -Fq "versionCode='33'" /tmp/public-v033-badging.txt
-          grep -Fq "launchable-activity: name='$EXPECTED_APP_ID.MainActivity'" /tmp/public-v033-badging.txt
-          "$aapt" dump permissions "$apk" > /tmp/public-v033-permissions.txt
-          grep -Fq 'android.permission.INTERNET' /tmp/public-v033-permissions.txt
-          grep -Fq 'android.permission.RECORD_AUDIO' /tmp/public-v033-permissions.txt
-          : > /tmp/public-v033-dex.txt
+          "$signer" verify --verbose --print-certs "$apk" > /tmp/public-v034-signer.txt
+          grep -Eq '^Verified using v[23] scheme.*true|^Verifies$' /tmp/public-v034-signer.txt
+          "$aapt" dump badging "$apk" > /tmp/public-v034-badging.txt
+          grep -Fq "name='$EXPECTED_APP_ID'" /tmp/public-v034-badging.txt
+          grep -Fq "versionName='0.4.29'" /tmp/public-v034-badging.txt
+          grep -Fq "versionCode='34'" /tmp/public-v034-badging.txt
+          grep -Fq "launchable-activity: name='$EXPECTED_APP_ID.MainActivity'" /tmp/public-v034-badging.txt
+          "$aapt" dump permissions "$apk" > /tmp/public-v034-permissions.txt
+          grep -Fq 'android.permission.INTERNET' /tmp/public-v034-permissions.txt
+          grep -Fq 'android.permission.RECORD_AUDIO' /tmp/public-v034-permissions.txt
+          : > /tmp/public-v034-dex.txt
           while IFS= read -r dex; do
-            unzip -p "$apk" "$dex" | strings >> /tmp/public-v033-dex.txt
+            unzip -p "$apk" "$dex" | strings >> /tmp/public-v034-dex.txt
           done < <(unzip -Z1 "$apk" | grep -E '^classes([0-9]+)?[.]dex$')
-          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v33/groq_stt_lab/MainActivity;' /tmp/public-v033-dex.txt
-          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v33/groq_stt_lab/GroqLabAudioDecoder;' /tmp/public-v033-dex.txt
-          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v33/groq_stt_lab/LabMicPartRecorder;' /tmp/public-v033-dex.txt
-          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v33/groq_stt_lab/LabMultiPartCapture;' /tmp/public-v033-dex.txt
-          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v33/groq_stt_lab/LabMultiPartSink;' /tmp/public-v033-dex.txt
-          cert="$(grep -im1 'certificate SHA-256 digest' /tmp/public-v033-signer.txt | sed -E 's/^.*digest:[[:space:]]*//' | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')"
+          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v34/groq_stt_lab/MainActivity;' /tmp/public-v034-dex.txt
+          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v34/groq_stt_lab/GroqLabAudioDecoder;' /tmp/public-v034-dex.txt
+          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v34/groq_stt_lab/LabMicPartRecorder;' /tmp/public-v034-dex.txt
+          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v34/groq_stt_lab/LabMultiPartCapture;' /tmp/public-v034-dex.txt
+          grep -Fq 'Lcom/example/meeting_recorder/public_lab_v34/groq_stt_lab/LabMultiPartSink;' /tmp/public-v034-dex.txt
+          cert="$(grep -im1 'certificate SHA-256 digest' /tmp/public-v034-signer.txt | sed -E 's/^.*digest:[[:space:]]*//' | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')"
           [[ "$cert" =~ ^[0-9A-F]{64}$ ]]
           test "$cert" != "$MAIN_PRIVATE_SIGNER"
           test "$cert" != "$LAB_V20_PRIVATE_SIGNER"
           unzip -tq "$apk"
           digest="$(sha256sum "$apk" | cut -d' ' -f1)"
           mkdir -p out
-          cp "$apk" out/groq-stt-lab-v0.4.28+33-public-debug.apk
+          cp "$apk" out/groq-stt-lab-v0.4.29+34-public-debug.apk
           {
             echo "REPO=easonliu714/meeting-recorder_public"
             echo "PUBLIC_BUILD_SHA=$GITHUB_SHA"
-            echo "VERSION=0.4.28+33"
+            echo "VERSION=0.4.29+34"
             echo "APPLICATION_ID=$EXPECTED_APP_ID"
             echo "APK_SHA256=$digest"
             echo "SIGNER_SHA256=$cert"
@@ -188,14 +188,14 @@ jobs:
             echo "GROQ_PROVIDER_E2E=NOT_VERIFIED"
             echo "REAL_AUDIO_WINDOW_GATE=FAIL_CLOSED_NO_SILENCE_PADDING"
             echo "API_KEYS_IN_CI=NONE"
-          } > out/public-v033-provenance.txt
-          cat out/public-v033-provenance.txt
+          } > out/public-v034-provenance.txt
+          cat out/public-v034-provenance.txt
 
       - name: Upload only checked Debug APK and sanitized provenance (5 days)
         if: env.LAB_BUILD_MODE == 'delivery'
         uses: actions/upload-artifact@v4
         with:
-          name: public-groq-lab-v033-debug
+          name: public-groq-lab-v034-debug
           path: labs/groq_stt_lab/out/
           retention-days: 5
           if-no-files-found: error
@@ -204,7 +204,7 @@ jobs:
         if: env.LAB_BUILD_MODE == 'delivery'
         uses: actions/download-artifact@v4
         with:
-          name: public-groq-lab-v033-debug
+          name: public-groq-lab-v034-debug
           path: labs/groq_stt_lab/readback/
 
       - name: Confirm downloaded APK CRC and byte identity
@@ -212,7 +212,7 @@ jobs:
         working-directory: labs/groq_stt_lab
         run: |
           set -euo pipefail
-          cmp out/groq-stt-lab-v0.4.28+33-public-debug.apk readback/groq-stt-lab-v0.4.28+33-public-debug.apk
-          cmp out/public-v033-provenance.txt readback/public-v033-provenance.txt
-          unzip -tq readback/groq-stt-lab-v0.4.28+33-public-debug.apk
+          cmp out/groq-stt-lab-v0.4.29+34-public-debug.apk readback/groq-stt-lab-v0.4.29+34-public-debug.apk
+          cmp out/public-v034-provenance.txt readback/public-v034-provenance.txt
+          unzip -tq readback/groq-stt-lab-v0.4.29+34-public-debug.apk
           echo "PUBLIC_ARTIFACT_READBACK_APK_CRC_AND_BYTE_IDENTITY_PASS"

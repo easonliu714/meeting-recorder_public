@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v33.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v34.groq_stt_lab
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -9,7 +9,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Public isolated Lab v33: no network calls, source deletion or API keys. */
+/** Public isolated Lab v34: no network calls, source deletion or API keys. */
 class MainActivity : FlutterActivity() {
     private val audioWorker = Executors.newSingleThreadExecutor()
     private val probeRunning = AtomicBoolean(false)

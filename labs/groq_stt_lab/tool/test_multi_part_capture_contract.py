@@ -28,6 +28,17 @@ class GateAMultiPartContract(unittest.TestCase):
         for key in ("lab-multi-start", "lab-multi-interrupt", "lab-multi-finish", "lab-multi-recover"):
             self.assertIn("Key('" + key + "')", UI)
 
+    def test_symbolic_failure_codes_without_private_path_leak(self):
+        for name in ("LAB_MULTI_RAW_FSYNC_HOLD", "LAB_MULTI_WAV_FSYNC_HOLD",
+                     "LAB_MULTI_HARDLINK_IO_HOLD", "LAB_MULTI_HARDLINK_UNSUPPORTED_HOLD",
+                     "LAB_MULTI_RECEIPT_FSYNC_HOLD", "LAB_MULTI_RECEIPT_READBACK_HOLD"):
+            self.assertIn(name, PROOF)
+        self.assertIn("hardLink(dest, tmp)", PROOF)
+        self.assertNotIn("StandardCopyOption.REPLACE_EXISTING", PROOF)
+        activity = (LAB / "native/MainActivity.kt").read_text(encoding="utf-8")
+        self.assertNotIn("result.error(error.message", activity)
+        self.assertIn('Regex("^[A-Z][A-Z0-9_]{1,63}$")', activity)
+
     def test_worker_retains_uncommitted_raw_and_never_seals_on_interrupt(self):
         sink = PROOF.split("internal class LabMultiPartSink",1)[1]
         self.assertIn('_inflight.pcm', sink)
