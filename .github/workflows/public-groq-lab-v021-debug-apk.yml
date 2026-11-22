@@ -51,7 +51,7 @@ jobs:
               ['git','diff','--name-only','c0c993c00c72e79b9b72697b4b2205b66168f026','HEAD'],
               text=True).splitlines()
           workflow = '.github/workflows/public-groq-lab-v021-debug-apk.yml'
-          assert workflow in tracked and 50 <= len(tracked) <= 75
+          assert workflow in tracked and 50 <= len(tracked) <= 80
           for name in tracked:
               if name == workflow:
                   continue

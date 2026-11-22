@@ -25,8 +25,8 @@ class GateBContract(unittest.TestCase):
         self.assertIn("mode.compareAndSet(0,1)",SERVICE)
     def test_notification_and_private_service_manifest(self):
         for v in ("FOREGROUND_SERVICE","FOREGROUND_SERVICE_MICROPHONE","POST_NOTIFICATIONS",
-                  "android:exported=\\"false\\"","android:foregroundServiceType"):
-            self.assertIn(v.replace('\\',''),BOOT)
+                  'android:exported="false"',"android:foregroundServiceType"):
+            self.assertIn(v,BOOT)
         for v in ("startForeground(","NotificationChannel(","PendingIntent.getService(",
                   "FOREGROUND_SERVICE_TYPE_MICROPHONE","STOP_FOREGROUND_REMOVE"):
             self.assertIn(v,SERVICE)
