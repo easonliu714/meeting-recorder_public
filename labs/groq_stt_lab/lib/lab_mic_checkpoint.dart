@@ -125,6 +125,15 @@ final class LabMicCheckpointStore {
 
   Future<LabMicSessionEvidence> restore({Directory? supportRoot}) async {
     final parent = await _parent(supportRoot);
+    // A fresh install has no capture directory. Classify absence before
+    // canonical resolution; don't create directories during read-only restore.
+    final parentType = await FileSystemEntity.type(parent.path, followLinks: false);
+    if (parentType == FileSystemEntityType.notFound) {
+      throw StateError('LAB_MIC_CHECKPOINT_MISSING_HOLD');
+    }
+    if (parentType != FileSystemEntityType.directory) {
+      throw StateError('LAB_MIC_CHECKPOINT_PATH_HOLD');
+    }
     final canonicalParent = await parent.resolveSymbolicLinks();
     final pointer = File(
         '${parent.path}${Platform.pathSeparator}$_pointerName');

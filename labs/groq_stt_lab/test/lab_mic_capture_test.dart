@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:groq_stt_lab/lab_audio_pipeline.dart';
 import 'package:groq_stt_lab/lab_mic_capture.dart';
 import 'package:groq_stt_lab/lab_mic_checkpoint.dart';
+import 'package:groq_stt_lab/lab_mic_interrupt_probe.dart';
+import 'package:groq_stt_lab/lab_debug_log.dart';
 
 Future<File> makeWav(File file, int seed) async {
   const frames = 48000;
@@ -279,5 +281,137 @@ void main() {
     );
     expect(await LabAudioPipeline.digest(manifest), digest);
     expect(await first.exists() && await second.exists(), isTrue);
+  });
+
+  test('fresh install missing capture parent has exact missing HOLD', () async {
+    final empty = Directory('${support.path}/fresh');
+    await empty.create();
+    await expectLater(
+      const LabMicCheckpointStore().restore(supportRoot: empty),
+      throwsA(isA<StateError>().having((e) => LabDebugJournal.failureCode(e),
+          'safe code', 'LAB_MIC_CHECKPOINT_MISSING_HOLD')),
+    );
+    expect(await Directory('${empty.path}/lab_mic_capture_v1').exists(), isFalse);
+  });
+
+  Future<Directory> makeInterruptAttempt({bool committed = true}) async {
+    final parent = Directory('${support.path}/lab_mic_interrupt_v1');
+    final folder = Directory('${parent.path}/$session');
+    await folder.create(recursive: true);
+    await File('${parent.path}/latest_attempt_v1.txt')
+        .writeAsString(session, flush: true);
+    final wav = await makeWav(File('${folder.path}/part_01.wav'), 43);
+    final manifest = {
+      'schema': 1, 'sessionId': session, 'sampleRate': 16000,
+      'index': 1, 'file': 'part_01.wav', 'bytes': 96044,
+      'sha256': await LabAudioPipeline.digest(wav),
+      'frameStart': 0, 'frameEnd': 48000,
+    };
+    await File('${folder.path}/${committed ? 'part_01_commit_v1.json' : 'part_01_commit.tmp'}')
+        .writeAsString(jsonEncode(manifest), flush: true);
+    await File('${folder.path}/part_02_inflight.pcm')
+        .writeAsBytes(List<int>.generate(15360, (i) => i % 251), flush: true);
+    return folder;
+  }
+
+  test('incomplete attempt recovers exactly committed Part 1, preserves tail',
+      () async {
+    final folder = await makeInterruptAttempt();
+    final wav = File('${folder.path}/part_01.wav');
+    final tail = File('${folder.path}/part_02_inflight.pcm');
+    final before = await LabAudioPipeline.digest(wav);
+    final tailSha = await LabAudioPipeline.digest(tail);
+    final restored = await const LabMicInterruptProbe().recover(supportRoot: support);
+    expect(restored.part.sha256, before);
+    expect(restored.part.bytes, 96044);
+    expect(restored.part.durationMs, 3000);
+    expect(restored.part.logicalStartMs, 0);
+    expect(restored.part.logicalEndMs, 3000);
+    expect(restored.tailBytes, 15360);
+    expect(await LabAudioPipeline.digest(wav), before);
+    expect(await LabAudioPipeline.digest(tail), tailSha);
+  });
+
+  test('fresh interruption root and uncommitted receipt fail closed',
+      () async {
+    const probe = LabMicInterruptProbe();
+    await expectLater(probe.recover(supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_INTERRUPT_MISSING_HOLD')));
+    final folder = await makeInterruptAttempt(committed: false);
+    await expectLater(probe.recover(supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_INTERRUPT_UNCOMMITTED_HOLD')));
+    expect(await File('${folder.path}/part_01.wav').exists(), isTrue);
+    expect(await File('${folder.path}/part_02_inflight.pcm').exists(), isTrue);
+  });
+
+  test('completed attempt is never described as interrupted recovery', () async {
+    final folder = await makeInterruptAttempt();
+    await File('${folder.path}/finished_v1.txt').writeAsString('completed');
+    await expectLater(
+      const LabMicInterruptProbe().recover(supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_INTERRUPT_NOT_INCOMPLETE_HOLD')));
+  });
+
+  test('interrupted prefix mutation and forged receipt fail closed', () async {
+    final folder = await makeInterruptAttempt();
+    final commit = File('${folder.path}/part_01_commit_v1.json');
+    final original = await commit.readAsString();
+    for (final change in [
+      {'frameEnd': 47999}, {'file': '../part_01.wav'}, {'index': 2},
+      {'sampleRate': 8000}, {'sessionId': '../other'},
+    ]) {
+      final data = Map<String, dynamic>.from(jsonDecode(original) as Map);
+      await commit.writeAsString(jsonEncode({...data, ...change}), flush: true);
+      await expectLater(
+        const LabMicInterruptProbe().recover(supportRoot: support),
+        throwsA(isA<StateError>().having((e) => e.message, 'code',
+            'LAB_MIC_INTERRUPT_FORMAT_HOLD')));
+    }
+    await commit.writeAsString(original, flush: true);
+    final wav = File('${folder.path}/part_01.wav');
+    final bytes = await wav.readAsBytes();
+    bytes[52] ^= 1;
+    await wav.writeAsBytes(bytes, flush: true);
+    await expectLater(
+      const LabMicInterruptProbe().recover(supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_INTERRUPT_SOURCE_HOLD')));
+    expect(await wav.exists(), isTrue);
+  });
+
+  test('interrupted tail is never resolved through an untrusted link', () async {
+    final folder = await makeInterruptAttempt();
+    final tail = File('${folder.path}/part_02_inflight.pcm');
+    await tail.rename('${folder.path}/retained_tail.pcm');
+    await Link(tail.path).create(first.path);
+    await expectLater(
+      const LabMicInterruptProbe().recover(supportRoot: support),
+      throwsA(isA<StateError>().having((e) => e.message, 'code',
+          'LAB_MIC_INTERRUPT_PATH_HOLD')));
+    expect(await first.exists(), isTrue);
+  });
+
+  test('interruption probe bridge requires explicit start and stop', () async {
+    final methods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      if (call.method == 'startLabMicInterruptProbe') {
+        return {'status': 'stopped', 'committedParts': 1};
+      }
+      if (call.method == 'stopLabMicInterruptProbe') return null;
+      throw PlatformException(code: 'UNEXPECTED_TEST_METHOD');
+    });
+    const probe = LabMicInterruptProbe();
+    final folder = await makeInterruptAttempt();
+    expect(folder.existsSync(), isTrue);
+    await probe.recover(supportRoot: support);
+    expect(methods, isEmpty);
+    expect(await probe.start(), 'stopped');
+    await probe.stop();
+    expect(methods, ['startLabMicInterruptProbe', 'stopLabMicInterruptProbe']);
   });
 }

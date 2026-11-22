@@ -10,6 +10,7 @@ import 'lab_part_roster.dart';
 import 'lab_part_native_pts.dart';
 import 'lab_mic_capture.dart';
 import 'lab_mic_checkpoint.dart';
+import 'lab_mic_interrupt_probe.dart';
 import 'lab_debug_log.dart';
 import 'lab_groq_free_usage_monitor.dart';
 import 'lab_groq_stt_panel.dart';
@@ -45,6 +46,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   final _nativePartPts = const LabPartNativePtsScanner();
   final _micRecorder = const LabMicCapture();
   final _micCheckpoints = const LabMicCheckpointStore();
+  final _micInterruptProbe = const LabMicInterruptProbe();
   final _debug = LabDebugJournal();
   final _freeMonitor = LabGroqFreeUsageMonitor();
   int _mockFreeResponseSerial = 0;
@@ -57,6 +59,9 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   final List<LabPartReceipt> _partRoster = [];
   List<LabPartNativePtsReceipt> _partPtsResults = const [];
   LabMicSessionEvidence? _micSession;
+  LabMicInterruptedReceipt? _micInterrupted;
+  bool _micProbeRunning = false;
+  String _micProbeStatus = '尚未執行中斷測試。';
   bool _busy = false;
   bool _stagingAudio = false;
   bool _cancelStagingRequested = false;
@@ -75,7 +80,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.26+31', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.27+32', 'git': LabBuildInfo.sourceSha});
   }
 
   Future<void> _chooseAudio() async {
@@ -332,7 +337,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
     }
   }
 
-  // Manual opt-in on the *same v31 Lab package* after app restart.
+  // Manual opt-in on the *same v32 Lab package* after app restart.
   // Re-reads immutable proof and both physical WAVs; never starts a recorder.
   Future<void> _restoreLabMicCheckpoint() async {
     if (_busy) return;
@@ -359,6 +364,83 @@ class _GroqLabHomeState extends State<GroqLabHome> {
       final code = LabDebugJournal.failureCode(e);
       _debug.record('LAB_MIC_CHECKPOINT_RESTORE_HOLD', {'code': code});
       if (mounted) setState(() => _status = '重啟恢復驗證 HOLD：$code');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Separate, manually started 3s + up-to-15s native interruption probe.
+  // Only completed Part 1 may subsequently be read as verified source.
+  Future<void> _startLabMicInterruptProbe() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _micProbeRunning = true;
+      _micInterrupted = null;
+      _micProbeStatus = '錄製中；持續說話約 5–8 秒後按中止。';
+    });
+    _debug.record('LAB_MIC_INTERRUPT_START', {'first_frames': 48000});
+    try {
+      final state = await _micInterruptProbe.start();
+      if (!mounted) return;
+      _debug.record(state == 'stopped'
+          ? 'LAB_MIC_INTERRUPT_STOPPED' : 'LAB_MIC_INTERRUPT_COMPLETED');
+      setState(() => _micProbeStatus = state == 'stopped'
+          ? '已中止本次錄音；請重啟 App，再手動驗證已提交 Part。'
+          : '本次沒有中斷，不能作為中斷恢復證據；請另開一次測試。');
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('LAB_MIC_INTERRUPT_HOLD', {'code': code});
+      if (mounted) setState(() => _micProbeStatus =
+          code == 'LAB_MIC_PERMISSION_REQUIRED_HOLD'
+              ? '請允許麥克風，再手動點擊開始。'
+              : '中斷測試 HOLD：$code');
+    } finally {
+      if (mounted) setState(() {
+        _busy = false;
+        _micProbeRunning = false;
+      });
+    }
+  }
+
+  Future<void> _stopLabMicInterruptProbe() async {
+    if (!_micProbeRunning) return;
+    try {
+      await _micInterruptProbe.stop();
+      _debug.record('LAB_MIC_INTERRUPT_STOP_REQUESTED');
+    } catch (e) {
+      _debug.record('LAB_MIC_INTERRUPT_STOP_HOLD',
+          {'code': LabDebugJournal.failureCode(e)});
+    }
+  }
+
+  Future<void> _recoverLabMicInterruptedPart() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _micInterrupted = null;
+      _micProbeStatus = '只讀驗證最近一次中斷測試已提交的 Part…';
+    });
+    _debug.record('LAB_MIC_INTERRUPT_RECOVER_START');
+    try {
+      final proof = await _micInterruptProbe.recover();
+      if (!mounted) return;
+      _debug.record('LAB_MIC_INTERRUPT_PREFIX_OK', {
+        'parts': 1,
+        'frames': 48000,
+        'bytes': proof.part.bytes,
+        'sha12': proof.part.sha256.substring(0, 12),
+        'tail_bytes_uncommitted': proof.tailBytes,
+      });
+      setState(() {
+        _micInterrupted = proof;
+        _micProbeStatus = '已核對第一段完整 WAV 與 SHA；'
+            '未提交尾段不算有效 Part，不推斷中斷原因。';
+      });
+    } catch (e) {
+      final code = LabDebugJournal.failureCode(e);
+      _debug.record('LAB_MIC_INTERRUPT_RECOVER_HOLD', {'code': code});
+      if (mounted) setState(() => _micProbeStatus = '中斷恢復 HOLD：$code');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1000,7 +1082,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                   child: const Text('App 重啟後，手動恢復上次錄音證據'),
                 ),
                 const Text('錄製成功後建立不可覆寫的來源證據；'
-                    '同一 v31 App 關閉再開啟後，只有按下恢復'
+                    '同一 v32 App 關閉再開啟後，只有按下恢復'
                     '才讀回檔案與比對 SHA。缺少、修改或不完整'
                     '證據一律 HOLD，不刪除原始 WAV。'
                     '不同 Lab 版本的獨立 App ID 不共用私有資料。'),
@@ -1020,6 +1102,36 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                         '；' +
                         _micSession!.parts[i].receipt.bytes.toString() + ' B'),
                 ],
+                const Divider(),
+                const Text('LAB-1I｜錄音中途中止與已提交 Part 恢復'),
+                const Text('獨立測試：第一段 3 秒 WAV 完整寫入及提交 SHA 後，'
+                    '才錄製最多 15 秒的未提交 PCM 尾段。'
+                    '請持續說話，約 5–8 秒後按中止，或離開 App 前景。'
+                    '不會自動續錄或傳送；原始檔均保留。'),
+                FilledButton.tonal(
+                  key: const Key('lab-mic-interrupt-start'),
+                  onPressed: _busy ? null : _startLabMicInterruptProbe,
+                  child: const Text('開始本機 18 秒中斷測試'),
+                ),
+                OutlinedButton(
+                  key: const Key('lab-mic-interrupt-stop'),
+                  onPressed: _micProbeRunning ? _stopLabMicInterruptProbe : null,
+                  child: const Text('中止本次錄音（保留已寫入資料）'),
+                ),
+                OutlinedButton(
+                  key: const Key('lab-mic-interrupt-recover'),
+                  onPressed: _busy ? null : _recoverLabMicInterruptedPart,
+                  child: const Text('重啟後手動核對中斷前已提交 Part'),
+                ),
+                Text(_micProbeStatus),
+                if (_micInterrupted != null) ...[
+                  Text('有效 Part 1：樣本 0–48000；'
+                      '96044 B；SHA12 ${_micInterrupted!.part.sha256.substring(0, 12)}'),
+                  Text('未提交尾段：${_micInterrupted!.tailBytes} B'
+                      '（不算有效 Part／不補零／不續錄）'),
+                ],
+                const Text('僅證明獨立 Lab 已完成第一段的磁碟恢復。'
+                    '不等於 Main Recorder 全域 PTS 或全段無遺失。'),
               ],
             ),
           ]),

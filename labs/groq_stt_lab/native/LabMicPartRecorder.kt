@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v31.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v32.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -11,6 +11,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.UUID
+import org.json.JSONObject
 
 /**
  * Foreground-only owner-consented LAB microphone source witness.
@@ -141,6 +142,109 @@ internal object LabMicPartRecorder {
                 recorder.stop()
             }
             recorder.release()
+        }
+    }
+
+    /**
+     * Separate interruption probe. First WAV is fully synced and SHA-bound
+     * before tail capture starts. A tail is NEVER promoted to a WAV receipt.
+     * Both files are kept; no automatic resume, deletion or remote request.
+     */
+    fun captureInterruptProbe(context: Context, cancelled: () -> Boolean): Map<String, Any> {
+        val root = context.filesDir.canonicalFile
+        val parent = File(root, "lab_mic_interrupt_v1")
+        require((parent.isDirectory || parent.mkdir()) &&
+            parent.canonicalFile == parent.absoluteFile) { "LAB_MIC_INTERRUPT_PATH_HOLD" }
+        val id = UUID.randomUUID().toString()
+        val folder = File(parent, id)
+        require(folder.mkdir()) { "LAB_MIC_INTERRUPT_PATH_HOLD" }
+        // Pointer identifies the newest attempted session, not an older success.
+        writeExclusive(File(parent, "latest_$id.tmp"), id.toByteArray(Charsets.UTF_8))
+        require(File(parent, "latest_$id.tmp").renameTo(File(parent, "latest_attempt_v1.txt"))) {
+            "LAB_MIC_INTERRUPT_POINTER_HOLD"
+        }
+        val minimum = AudioRecord.getMinBufferSize(RATE,
+            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        require(minimum > 0) { "LAB_MIC_CONFIG_HOLD" }
+        val recorder = AudioRecord(MediaRecorder.AudioSource.MIC, RATE,
+            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+            maxOf(minimum, 8192))
+        val chunk = ByteArray(8192)
+        var committed = 0
+        val started = SystemClock.elapsedRealtimeNanos()
+        fun shouldStop(): Boolean = cancelled() || Thread.currentThread().isInterrupted
+        fun stopResult(): Map<String, Any> = mapOf(
+            "status" to "stopped", "committedParts" to committed)
+        fun writeFrames(output: FileOutputStream, bytes: Int): Boolean {
+            var remaining = bytes
+            while (remaining > 0) {
+                if (shouldStop()) return false
+                require(SystemClock.elapsedRealtimeNanos() - started < 45_000_000_000L) {
+                    "LAB_MIC_TIMEOUT_HOLD"
+                }
+                val count = recorder.read(chunk, 0, minOf(chunk.size, remaining),
+                    AudioRecord.READ_BLOCKING)
+                if (shouldStop()) return false
+                require(count > 0 && count % 2 == 0) { "LAB_MIC_READ_HOLD" }
+                output.write(chunk, 0, count)
+                remaining -= count
+            }
+            return true
+        }
+        try {
+            require(recorder.state == AudioRecord.STATE_INITIALIZED) { "LAB_MIC_INIT_HOLD" }
+            if (shouldStop()) return stopResult()
+            recorder.startRecording()
+            require(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                "LAB_MIC_START_HOLD"
+            }
+            val first = File(folder, "part_01.wav")
+            require(first.createNewFile()) { "LAB_MIC_PART_EXISTS_HOLD" }
+            FileOutputStream(first, false).use { output ->
+                output.write(wavHeader())
+                val full = writeFrames(output, PART_BYTES)
+                output.fd.sync()
+                if (!full) return stopResult()
+            }
+            require(first.length() == PART_BYTES + 44L) { "LAB_MIC_PART_SIZE_HOLD" }
+            val receipt = JSONObject()
+                .put("schema", 1).put("sessionId", id).put("sampleRate", RATE)
+                .put("index", 1).put("file", "part_01.wav")
+                .put("bytes", first.length()).put("sha256", sha256(first))
+                .put("frameStart", 0).put("frameEnd", PART_FRAMES)
+            // A torn temporary receipt cannot be mistaken for a committed Part.
+            val temp = File(folder, "part_01_commit.tmp")
+            writeExclusive(temp, receipt.toString().toByteArray(Charsets.UTF_8))
+            require(temp.renameTo(File(folder, "part_01_commit_v1.json"))) {
+                "LAB_MIC_INTERRUPT_COMMIT_HOLD"
+            }
+            committed = 1
+            if (shouldStop()) return stopResult()
+            // Up to 15s tail; it is intentionally NOT a WAV or a committed Part.
+            val tail = File(folder, "part_02_inflight.pcm")
+            require(tail.createNewFile()) { "LAB_MIC_PART_EXISTS_HOLD" }
+            FileOutputStream(tail, false).use { output ->
+                val full = writeFrames(output, RATE * 2 * 15)
+                output.fd.sync()
+                if (!full) return stopResult()
+            }
+            if (shouldStop()) return stopResult()
+            writeExclusive(File(folder, "finished_v1.txt"), "completed".toByteArray(Charsets.UTF_8))
+            return mapOf("status" to "completed", "committedParts" to committed)
+        } finally {
+            try {
+                if (recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) recorder.stop()
+            } finally {
+                recorder.release()
+            }
+        }
+    }
+
+    private fun writeExclusive(file: File, bytes: ByteArray) {
+        require(file.createNewFile()) { "LAB_MIC_INTERRUPT_EXISTS_HOLD" }
+        FileOutputStream(file, false).use { output ->
+            output.write(bytes)
+            output.fd.sync()
         }
     }
 }
