@@ -1,4 +1,4 @@
-name: Public Groq STT Lab v0.4.31+36 Gate B Debug APK
+name: Public Groq STT Lab v36 Gate C clock core source-only regression
 on:
   push:
     branches:
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
-      LAB_BUILD_MODE: delivery
+      LAB_BUILD_MODE: source_only
       EXPECTED_APP_ID: com.example.meeting_recorder.public_lab_v36.groq_stt_lab
       PUBLIC_BASE_HEAD: c0c993c00c72e79b9b72697b4b2205b66168f026
       V21_HEAD: 710e0df35d02dd6c0883db68bb34db66174c427c
@@ -107,6 +107,9 @@ jobs:
           command -v kotlinc
           kotlinc native/LabMultiPartProof.kt tool/host_tests/LabMultiPartProofHostTest.kt -include-runtime -d /tmp/lab-multipart-host.jar
           java -jar /tmp/lab-multipart-host.jar
+          # Gate C core only: no APK until FGS reminder/confirmation is wired.
+          kotlinc native/LabTwoHourReminder.kt tool/host_tests/LabTwoHourReminderHostTest.kt -include-runtime -d /tmp/lab-c-clock-host.jar
+          java -jar /tmp/lab-c-clock-host.jar
 
       - name: Run identity/PCM fail-closed regression then generate Android
         working-directory: labs/groq_stt_lab
