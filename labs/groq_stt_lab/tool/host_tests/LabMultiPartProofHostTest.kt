@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v32.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v33.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -74,6 +74,42 @@ fun main() {
             wav(d,1,48000,1);j.commit(1);j.finish(1)
             File(d,"finished_v1.txt").writeText("forged")
             reject{j.recoverSnapshot()};reject{j.commit(2)}
+        }
+        case("stream writer seals four chunks across read boundaries") { d,id,_ ->
+            val counts=mutableListOf<Int>()
+            LabMultiPartSink(d,id,12,4,{true},{counts.add(it)}).use { s ->
+                s.accept(ByteArray(10){1});s.accept(ByteArray(18){2});s.accept(ByteArray(20){3});s.finish(true)
+            }
+            val r=LabMultiPartProof(d,id).recoverSnapshot()
+            check(r.finished && r.receipts.size==4 && r.receipts.last().end==24L)
+            check(counts==listOf(1,2,3,4))
+        }
+        case("later interruption keeps raw tail") { d,id,_ ->
+            LabMultiPartSink(d,id,12,4,{true}).use { s ->s.accept(ByteArray(32){7});s.finish(false)}
+            val r=LabMultiPartProof(d,id).recoverSnapshot()
+            check(!r.finished && r.receipts.size==2 && r.receipts.last().end==12L)
+            check(File(d,"part_000003_inflight.pcm").length()==8L)
+            check(!File(d,"part_000003.wav").exists())
+        }
+        case("normal finish seals short last part") { d,id,_ ->
+            LabMultiPartSink(d,id,12,4,{true}).use { s ->s.accept(ByteArray(16){4});s.finish(true)}
+            val r=LabMultiPartProof(d,id).recoverSnapshot()
+            check(r.finished && r.receipts.map {it.bytes}==listOf(56L,48L))
+        }
+        case("early interruption never promotes first raw tail") { d,id,_ ->
+            LabMultiPartSink(d,id,12,4,{true}).use { s ->s.accept(ByteArray(4){3});s.finish(false)}
+            check(File(d,"part_000001_inflight.pcm").length()==4L)
+            reject {LabMultiPartProof(d,id).recover()}
+        }
+        case("controlled storage failure preserves prior receipt") { d,id,_ ->
+            var space=true
+            LabMultiPartSink(d,id,12,4,{space}).use { s ->
+                s.accept(ByteArray(12){2});s.accept(ByteArray(4){3})
+                space=false;reject{s.accept(ByteArray(8){1})}
+            }
+            val r=LabMultiPartProof(d,id).recoverSnapshot()
+            check(!r.finished && r.receipts.size==1)
+            check(File(d,"part_000002_inflight.pcm").length()==4L)
         }
         println("HOST_REGRESSION=$count/$count PASS")
     } finally { base.deleteRecursively() }

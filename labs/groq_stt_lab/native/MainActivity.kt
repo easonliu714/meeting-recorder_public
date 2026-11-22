@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v32.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v33.groq_stt_lab
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -7,18 +7,58 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
-/** Public isolated Lab v32: no network calls, source deletion or API keys. */
+/** Public isolated Lab v33: no network calls, source deletion or API keys. */
 class MainActivity : FlutterActivity() {
     private val audioWorker = Executors.newSingleThreadExecutor()
     private val probeRunning = AtomicBoolean(false)
     private val probeStop = AtomicBoolean(false)
     private var probeForeground = false
+    private val multiRunning = AtomicBoolean(false)
+    private val multiMode = AtomicInteger(0)
+    private val multiCaptured = AtomicInteger(0)
+    private val multiCommitted = AtomicInteger(0)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
             "groq_stt_lab/offline_audio").setMethodCallHandler { call, result ->
+            if (call.method == "labMultiProgress") {
+                result.success(mapOf("frames" to multiCaptured.get(), "committed" to multiCommitted.get()))
+                return@setMethodCallHandler
+            }
+            if (call.method == "labMultiInterrupt" || call.method == "labMultiFinish") {
+                if (multiRunning.get()) multiMode.compareAndSet(0, if (call.method == "labMultiInterrupt") 1 else 2)
+                result.success(null)
+                return@setMethodCallHandler
+            }
+            if (call.method == "labMultiStart" || call.method == "labMultiRecover") {
+                val capture = call.method == "labMultiStart"
+                if (!probeForeground || probeRunning.get() || multiRunning.get()) {
+                    result.error("LAB_MULTI_BUSY_OR_BACKGROUND_HOLD","Explicit foreground action required",null)
+                    return@setMethodCallHandler
+                }
+                if (capture && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),40130)
+                    result.error("LAB_MIC_PERMISSION_REQUIRED_HOLD","Explicit user permission required",null)
+                    return@setMethodCallHandler
+                }
+                multiRunning.set(true)
+                multiMode.set(0);multiCaptured.set(0);multiCommitted.set(0)
+                audioWorker.execute {
+                    try {
+                        val out=if(capture) LabMultiPartCapture.capture(applicationContext,multiMode,multiCaptured,multiCommitted)
+                            else LabMultiPartCapture.recover(applicationContext)
+                        runOnUiThread { result.success(out) }
+                    } catch (error:Exception) {
+                        val code=error.message?.takeIf { Regex("^[A-Z][A-Z0-9_]{1,63}$").matches(it) }
+                            ?: "LAB_MULTI_CAPTURE_OR_STORAGE_HOLD"
+                        runOnUiThread { result.error(code,"Local multi-Part operation held",null) }
+                    } finally { multiRunning.set(false) }
+                }
+                return@setMethodCallHandler
+            }
             if (call.method == "stopLabMicInterruptProbe") {
                 probeStop.set(true)
                 result.success(null)
@@ -135,11 +175,13 @@ class MainActivity : FlutterActivity() {
     override fun onPause() {
         probeForeground = false
         if (probeRunning.get()) probeStop.set(true)
+        if (multiRunning.get()) multiMode.compareAndSet(0,1)
         super.onPause()
     }
 
     override fun onDestroy() {
         probeStop.set(true)
+        multiMode.compareAndSet(0,1)
         audioWorker.shutdownNow()
         super.onDestroy()
     }

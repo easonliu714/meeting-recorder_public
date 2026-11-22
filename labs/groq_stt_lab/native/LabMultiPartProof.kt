@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v32.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v33.groq_stt_lab
 
 import java.io.File
 import java.io.FileOutputStream
@@ -119,5 +119,87 @@ internal class LabMultiPartProof(private val folder: File, private val session: 
         publish(dest, encode(receipt))
         requireSafe(recover().lastOrNull() == receipt)
         return receipt
+    }
+}
+
+
+/** Serialized disk worker. Raw PCM is kept; only fully verified WAV receipts
+ * are committed. A process death leaves the uncommitted tail isolated.
+ */
+internal class LabMultiPartSink(
+    private val folder: File, session: UUID,
+    private val partBytes: Int, private val partLimit: Int,
+    private val spaceOk: () -> Boolean = { folder.usableSpace >= 8L * 1024 * 1024 },
+    private val onCommit: (Int) -> Unit = {}
+) : java.io.Closeable {
+    private val proof = LabMultiPartProof(folder, session)
+    private var index = 1
+    private var written = 0
+    private var raw: File? = null
+    private var output: FileOutputStream? = null
+    private var ended = false
+    init { require(partBytes in 2..115200000 && partBytes % 2 == 0 && partLimit in 1..128) }
+    private fun stem() = "part_%06d".format(java.util.Locale.ROOT,index)
+    private fun ensureSpace() = check(spaceOk()) { "LAB_MULTI_STORAGE_HOLD" }
+    private fun open() {
+        check(!ended && index <= partLimit)
+        ensureSpace()
+        val f = File(folder,stem()+"_inflight.pcm")
+        check(f.createNewFile()) { "LAB_MULTI_EXISTS_HOLD" }
+        raw=f; output=FileOutputStream(f)
+    }
+    private fun seal() {
+        check(written>0 && written%2==0)
+        val f=requireNotNull(raw)
+        requireNotNull(output).let { it.fd.sync(); it.close() }
+        output=null
+        check(f.length()==written.toLong()) { "LAB_MULTI_SIZE_HOLD" }
+        ensureSpace()
+        val wav=File(folder,stem()+".wav")
+        check(wav.createNewFile()) { "LAB_MULTI_EXISTS_HOLD" }
+        val b=ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
+        fun tag(s:String) { b.put(s.toByteArray(Charsets.US_ASCII)) }
+        tag("RIFF"); b.putInt(36+written); tag("WAVE"); tag("fmt "); b.putInt(16)
+        b.putShort(1); b.putShort(1); b.putInt(16000); b.putInt(32000)
+        b.putShort(2); b.putShort(16); tag("data"); b.putInt(written)
+        FileOutputStream(wav).use { out ->
+            out.write(b.array())
+            f.inputStream().use { input ->
+                check(input.copyTo(out)==written.toLong()) { "LAB_MULTI_SIZE_HOLD" }
+            }
+            out.fd.sync()
+        }
+        val receipt=proof.commit(index)
+        check(receipt.bytes==written.toLong()+44L)
+        onCommit(index)
+        index++;written=0;raw=null
+    }
+    fun accept(bytes:ByteArray) {
+        check(!ended && bytes.isNotEmpty() && bytes.size%2==0)
+        var offset=0
+        while(offset<bytes.size) {
+            if(output==null) open()
+            ensureSpace()
+            val take=minOf(partBytes-written,bytes.size-offset)
+            requireNotNull(output).write(bytes,offset,take)
+            written+=take;offset+=take
+            if(written==partBytes) seal()
+        }
+    }
+    /** Normal stop seals a nonempty final partial Part; interrupt does not. */
+    fun finish(normal:Boolean) {
+        check(!ended)
+        if(normal && written>0) seal()
+        close()
+        if(normal) {
+            check(index>1) { "LAB_MULTI_UNCOMMITTED_HOLD" }
+            proof.finish(index-1)
+        }
+    }
+    override fun close() {
+        ended=true
+        val out=output
+        output=null
+        if(out!=null) { try { out.fd.sync() } finally { out.close() } }
     }
 }
