@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v34.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v35.groq_stt_lab
 
 import java.io.File
 import java.io.FileOutputStream
@@ -6,6 +6,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
+import java.nio.file.FileAlreadyExistsException
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -15,10 +18,7 @@ import java.util.UUID
  * The sample ledger is not a hardware PTS or power-loss attestation.
  */
 internal class LabMultiPartProof(private val folder: File, private val session: UUID,
-    private val hardLink: (File, File) -> Unit = { target, source ->
-        Files.createLink(target.toPath(), source.toPath())
-        Unit
-    }) {
+    private val receiptWriter: ((File, ByteArray) -> Unit)? = null) {
     data class Receipt(val index: Int, val start: Long, val end: Long, val bytes: Long, val sha: String)
     data class Recovery(val receipts: List<Receipt>, val finished: Boolean)
     private val maxParts = 128
@@ -96,32 +96,40 @@ internal class LabMultiPartProof(private val folder: File, private val session: 
     }
     fun recover(): List<Receipt> = recoverSnapshot().receipts
 
-    /** Synced temporary metadata, then exclusive atomic publication by hard link.
-     * Never replace a destination even if another writer races; no weaker fallback.
-     * The private temp receipt is deliberately retained on publication failure.
+    /** Exclusive-create, fsync and exact readback; never overwrite an existing receipt.
+     * CREATE_NEW is atomic for name creation, NOT atomic publication of its content.
+     * A crash during write leaves a partial receipt; scan rejects it fail-closed.
+     * Original PCM/WAV is NEVER modified or deleted by journal publication.
      */
     private fun publish(dest: File, text: String) {
         requireSafe(!present(dest))
-        val tmp = file("${dest.name}.${UUID.randomUUID()}.tmp")
-        atPhase("LAB_MULTI_RECEIPT_CREATE_HOLD") {
-            requireSafe(tmp.createNewFile())
-        }
-        atPhase("LAB_MULTI_RECEIPT_FSYNC_HOLD") {
-            FileOutputStream(tmp).use { it.write(text.toByteArray(Charsets.US_ASCII)); it.fd.sync() }
-        }
-        // This is exclusive hard-link publication, NOT an unsafe rename fallback.
+        val expected = text.toByteArray(Charsets.US_ASCII)
         try {
-            hardLink(dest, tmp)
-        } catch (error: java.nio.file.FileAlreadyExistsException) {
+            val injected = receiptWriter
+            if (injected != null) {
+                injected(dest, expected)
+            } else {
+                FileChannel.open(dest.toPath(),
+                    StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.WRITE).use { channel ->
+                    val source = ByteBuffer.wrap(expected)
+                    while (source.hasRemaining()) {
+                        requireSafe(channel.write(source) > 0)
+                    }
+                    channel.force(true)
+                }
+            }
+        } catch (error: FileAlreadyExistsException) {
             throw IllegalStateException("LAB_MULTI_RECEIPT_EXISTS_HOLD", error)
         } catch (error: UnsupportedOperationException) {
-            throw IllegalStateException("LAB_MULTI_HARDLINK_UNSUPPORTED_HOLD", error)
+            throw IllegalStateException("LAB_MULTI_RECEIPT_UNSUPPORTED_HOLD", error)
         } catch (error: java.io.IOException) {
-            throw IllegalStateException("LAB_MULTI_HARDLINK_IO_HOLD", error)
-        } catch (error: Exception) {
-            throw IllegalStateException("LAB_MULTI_HARDLINK_RUNTIME_HOLD", error)
+            throw IllegalStateException("LAB_MULTI_RECEIPT_WRITE_HOLD", error)
         }
-        atPhase("LAB_MULTI_RECEIPT_CLEANUP_HOLD") { Files.delete(tmp.toPath()) }
+        atPhase("LAB_MULTI_RECEIPT_READBACK_HOLD") {
+            requireSafe(regular(dest) && dest.length() == expected.size.toLong())
+            requireSafe(dest.readBytes().contentEquals(expected))
+        }
     }
 
     /** Only the recorder's explicit normal finalization may publish a terminal marker. */

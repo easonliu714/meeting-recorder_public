@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v34.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v35.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat

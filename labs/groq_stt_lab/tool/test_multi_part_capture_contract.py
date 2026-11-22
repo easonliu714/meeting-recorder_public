@@ -30,10 +30,13 @@ class GateAMultiPartContract(unittest.TestCase):
 
     def test_symbolic_failure_codes_without_private_path_leak(self):
         for name in ("LAB_MULTI_RAW_FSYNC_HOLD", "LAB_MULTI_WAV_FSYNC_HOLD",
-                     "LAB_MULTI_HARDLINK_IO_HOLD", "LAB_MULTI_HARDLINK_UNSUPPORTED_HOLD",
+                     "LAB_MULTI_RECEIPT_WRITE_HOLD", "LAB_MULTI_RECEIPT_UNSUPPORTED_HOLD",
                      "LAB_MULTI_RECEIPT_FSYNC_HOLD", "LAB_MULTI_RECEIPT_READBACK_HOLD"):
             self.assertIn(name, PROOF)
-        self.assertIn("hardLink(dest, tmp)", PROOF)
+        self.assertIn("FileChannel.open(dest.toPath()", PROOF)
+        self.assertIn("StandardOpenOption.CREATE_NEW", PROOF)
+        self.assertIn("channel.force(true)", PROOF)
+        self.assertNotIn("Files.createLink(", PROOF)
         self.assertNotIn("StandardCopyOption.REPLACE_EXISTING", PROOF)
         activity = (LAB / "native/MainActivity.kt").read_text(encoding="utf-8")
         self.assertNotIn("result.error(error.message", activity)

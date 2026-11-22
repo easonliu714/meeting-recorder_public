@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v34.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v35.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -111,21 +111,49 @@ fun main() {
             check(!r.finished && r.receipts.size==1)
             check(File(d,"part_000002_inflight.pcm").length()==4L)
         }
-        case("hardlink IO refused keeps immutable WAV and no receipt") { d,id,_ ->
+        case("receipt writer IO rejected without touching WAV") { d,id,_ ->
             val f=wav(d,1,48000,1)
+            val prior=f.readBytes()
             val j=LabMultiPartProof(d,id,{_,_->throw java.io.IOException("sensitive sandbox path")})
-            val e=runCatching{j.commit(1)}.exceptionOrNull()
-            check(e?.message=="LAB_MULTI_HARDLINK_IO_HOLD")
-            check(f.exists() && !File(d,"part_000001.commit").exists())
-            reject{LabMultiPartProof(d,id).recover()}
-            check(d.listFiles()!!.any{it.name.endsWith(".tmp")})
+            val e=runCatching { j.commit(1) }.exceptionOrNull()
+            check(e?.message=="LAB_MULTI_RECEIPT_WRITE_HOLD")
+            check(f.readBytes().contentEquals(prior))
+            check(!File(d,"part_000001.commit").exists())
+            reject { LabMultiPartProof(d,id).recover() }
         }
-        case("hardlink unsupported keeps original data and no commit") { d,id,_ ->
+        case("receipt writer unsupported rejected without touching WAV") { d,id,_ ->
             val f=wav(d,1,48000,1)
             val j=LabMultiPartProof(d,id,{_,_->throw UnsupportedOperationException("unsupported")})
-            val e=runCatching{j.commit(1)}.exceptionOrNull()
-            check(e?.message=="LAB_MULTI_HARDLINK_UNSUPPORTED_HOLD")
+            val e=runCatching { j.commit(1) }.exceptionOrNull()
+            check(e?.message=="LAB_MULTI_RECEIPT_UNSUPPORTED_HOLD")
             check(f.exists() && !File(d,"part_000001.commit").exists())
+        }
+        case("partially written committed receipt fails closed and source survives") { d,id,_ ->
+            val f=wav(d,1,48000,1)
+            val original=f.readBytes()
+            val j=LabMultiPartProof(d,id,{dest, bytes->
+                check(dest.createNewFile())
+                FileOutputStream(dest).use { out ->
+                    out.write(bytes,0,bytes.size/2)
+                    out.fd.sync()
+                }
+                throw java.io.IOException("simulated crash during metadata receipt write")
+            })
+            check(runCatching { j.commit(1) }.exceptionOrNull()?.message=="LAB_MULTI_RECEIPT_WRITE_HOLD")
+            check(f.readBytes().contentEquals(original))
+            check(File(d,"part_000001.commit").exists())
+            reject { LabMultiPartProof(d,id).recover() }
+            reject { LabMultiPartProof(d,id).commit(1) }
+        }
+        case("exclusive receipt already existing cannot be replaced") { d,id,j ->
+            val source=wav(d,1,48000,1)
+            val original=source.readBytes()
+            val receipt=j.commit(1)
+            val f=File(d,"part_000001.commit")
+            val bytes=f.readBytes()
+            reject { j.commit(1) }
+            check(f.readBytes().contentEquals(bytes) && source.readBytes().contentEquals(original))
+            check(LabMultiPartProof(d,id).recover().single()==receipt)
         }
         println("HOST_REGRESSION=$count/$count PASS")
     } finally { base.deleteRecursively() }
