@@ -71,6 +71,9 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   int _multiCommitted = 0;
   String _multiStatus = '尚未執行多 Part 測試。';
   List<String> _multiReceipts = const [];
+  String _backgroundStatus='尚未啟動背景錄音';
+  bool _backgroundRunning=false;
+  bool _backgroundBusy=false;
   bool _busy = false;
   bool _stagingAudio = false;
   bool _cancelStagingRequested = false;
@@ -89,7 +92,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   void initState() {
     super.initState();
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.30+35', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.31+36', 'git': LabBuildInfo.sourceSha});
   }
 
   @override
@@ -185,6 +188,44 @@ class _GroqLabHomeState extends State<GroqLabHome> {
       _debug.record(normal ? 'LAB_MULTI_FINISH_REQUESTED' : 'LAB_MULTI_INTERRUPT_REQUESTED');
     } catch (e) {
       _debug.record('LAB_MULTI_HOLD', {'code':LabDebugJournal.failureCode(e)});
+    }
+  }
+
+  Future<void> _backgroundAction(String method) async {
+    if (_backgroundBusy) return;
+    setState(() => _backgroundBusy=true);
+    try {
+      final data=await _multiChannel.invokeMapMethod<String,dynamic>(method);
+      _debug.record(method=='labBackgroundStart'?'LAB_B_START_REQUESTED':'LAB_B_STATUS_CHECK');
+      if (data!=null) {
+        final phase=data['phase']; final frames=data['frames'];
+        final parts=data['committed']; final code=data['errorCode'];
+        if (phase is! String || frames is! int || parts is! int ||
+            code is! String || frames<0 || frames>384000 || parts<0 || parts>4) {
+          throw StateError('LAB_B_STATUS_HOLD');
+        }
+        if (mounted) setState(() {
+          _backgroundRunning=phase=='starting'||phase=='recording';
+          _backgroundStatus='狀態：'+phase+'；已採集 '+frames.toString()+
+            ' 樣本；已提交 '+parts.toString()+' 段；尾段 '+
+            data['tailBytes'].toString()+' B；'+code;
+        });
+        _debug.record('LAB_B_STATUS', {'phase':phase,'frames':frames,'committed':parts});
+      }
+    } catch(e) {
+      final code=LabDebugJournal.failureCode(e);
+      _debug.record('LAB_B_HOLD', {'code':code});
+      if (mounted) setState(()=>_backgroundStatus='HOLD：'+code);
+    } finally { if(mounted) setState(()=>_backgroundBusy=false); }
+  }
+
+  Future<void> _backgroundStop() async {
+    try {
+      await _multiChannel.invokeMethod<void>('labBackgroundStop');
+      _debug.record('LAB_B_USER_STOP_REQUESTED');
+      if(mounted) setState(()=>_backgroundStatus='已要求停止；請點擊「查詢背景錄音狀態」');
+    } catch(e) {
+      _debug.record('LAB_B_HOLD', {'code':LabDebugJournal.failureCode(e)});
     }
   }
 
@@ -1187,7 +1228,7 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                   child: const Text('App 重啟後，手動恢復上次錄音證據'),
                 ),
                 const Text('錄製成功後建立不可覆寫的來源證據；'
-                    '同一 v35 App 關閉再開啟後，只有按下恢復'
+                    '同一 v36 App 關閉再開啟後，只有按下恢復'
                     '才讀回檔案與比對 SHA。缺少、修改或不完整'
                     '證據一律 HOLD，不刪除原始 WAV。'
                     '不同 Lab 版本的獨立 App ID 不共用私有資料。'),
@@ -1265,6 +1306,36 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                 if (_multiRunning) Text('已擷取樣本：$_multiFrames；已提交：$_multiCommitted 段'),
                 Text(_multiStatus),
                 for (final receipt in _multiReceipts) Text(receipt),
+                const Divider(),
+                const Text('LAB-REC-B｜背景與鎖屏持續錄音'),
+                const Text('獨立的 Android 麥克風前景服務。'
+                    '明確開始後可按 Home、切換 App、鎖屏；'
+                    '測試最多四段，每段六秒。通知提供停止入口。'
+                    '程序被強制停止後不會自動續錄。'),
+                FilledButton.tonal(
+                  key: const Key('lab-background-start'),
+                  onPressed: _busy||_backgroundBusy||_backgroundRunning ? null :
+                    () => _backgroundAction('labBackgroundStart'),
+                  child: const Text('開始 24 秒背景錄音'),
+                ),
+                OutlinedButton(
+                  key: const Key('lab-background-status'),
+                  onPressed: _backgroundBusy ? null :
+                    () => _backgroundAction('labBackgroundStatus'),
+                  child: const Text('查詢背景錄音狀態'),
+                ),
+                OutlinedButton(
+                  key: const Key('lab-background-stop'),
+                  onPressed: _backgroundRunning ? _backgroundStop : null,
+                  child: const Text('停止背景錄音並封存'),
+                ),
+                OutlinedButton(
+                  key: const Key('lab-background-readback'),
+                  onPressed: _busy||_backgroundRunning ? null :
+                    () => _runMultiPart(capture:false),
+                  child: const Text('手動核對背景錄音 Part'),
+                ),
+                Text(_backgroundStatus),
               ],
             ),
           ]),

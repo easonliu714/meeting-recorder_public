@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v35.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v36.groq_stt_lab
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -9,7 +9,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Public isolated Lab v35: no network calls, source deletion or API keys. */
+/** Public isolated Lab v36: no network calls, source deletion or API keys. */
 class MainActivity : FlutterActivity() {
     private val audioWorker = Executors.newSingleThreadExecutor()
     private val probeRunning = AtomicBoolean(false)
@@ -24,6 +24,42 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
             "groq_stt_lab/offline_audio").setMethodCallHandler { call, result ->
+            if (call.method == "labBackgroundStatus") {
+                result.success(LabBackgroundRecorderService.status())
+                return@setMethodCallHandler
+            }
+            if (call.method == "labBackgroundStop") {
+                LabBackgroundRecorderService.requestStop()
+                result.success(null)
+                return@setMethodCallHandler
+            }
+            if (call.method == "labBackgroundStart") {
+                if (!probeForeground || probeRunning.get() || multiRunning.get() ||
+                    LabBackgroundRecorderService.isActive()) {
+                    result.error("LAB_B_BUSY_OR_BACKGROUND_HOLD","Explicit visible start required",null)
+                    return@setMethodCallHandler
+                }
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),40130)
+                    result.error("LAB_MIC_PERMISSION_REQUIRED_HOLD","Explicit permission required",null)
+                    return@setMethodCallHandler
+                }
+                if (android.os.Build.VERSION.SDK_INT>=33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),40131)
+                    result.error("LAB_B_NOTIFICATION_PERMISSION_HOLD","Visible notification required",null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    LabBackgroundRecorderService.begin(applicationContext)
+                    result.success(LabBackgroundRecorderService.status())
+                } catch (e:Exception) {
+                    val code=e.message?.takeIf{Regex("^[A-Z][A-Z0-9_]{1,63}$").matches(it)}
+                        ?:"LAB_B_SERVICE_START_HOLD"
+                    result.error(code,"Background service held",null)
+                }
+                return@setMethodCallHandler
+            }
             if (call.method == "labMultiProgress") {
                 result.success(mapOf("frames" to multiCaptured.get(), "committed" to multiCommitted.get()))
                 return@setMethodCallHandler
@@ -35,7 +71,7 @@ class MainActivity : FlutterActivity() {
             }
             if (call.method == "labMultiStart" || call.method == "labMultiRecover") {
                 val capture = call.method == "labMultiStart"
-                if (!probeForeground || probeRunning.get() || multiRunning.get()) {
+                if (!probeForeground || probeRunning.get() || multiRunning.get() || LabBackgroundRecorderService.isActive()) {
                     result.error("LAB_MULTI_BUSY_OR_BACKGROUND_HOLD","Explicit foreground action required",null)
                     return@setMethodCallHandler
                 }
