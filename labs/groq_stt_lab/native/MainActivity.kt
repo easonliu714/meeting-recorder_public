@@ -24,8 +24,20 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
             "groq_stt_lab/offline_audio").setMethodCallHandler { call, result ->
-            if (call.method == "labBackgroundStatus") {
+            if (call.method == "labBackgroundStatus" || call.method == "labReminderStatus") {
                 result.success(LabBackgroundRecorderService.status())
+                return@setMethodCallHandler
+            }
+            if (call.method == "labReminderContinue" || call.method == "labReminderEnd") {
+                try {
+                    if(call.method=="labReminderContinue") LabBackgroundRecorderService.cContinue()
+                    else LabBackgroundRecorderService.cEnd()
+                    result.success(LabBackgroundRecorderService.status())
+                } catch(e:Exception) {
+                    val code=e.message?.takeIf { Regex("^LAB_C_[A-Z0-9_]{2,55}_HOLD$").matches(it) }
+                        ?: "LAB_C_CHOICE_HOLD"
+                    result.error(code,"Simulated reminder choice rejected",null)
+                }
                 return@setMethodCallHandler
             }
             if (call.method == "labBackgroundStop") {
@@ -33,7 +45,7 @@ class MainActivity : FlutterActivity() {
                 result.success(null)
                 return@setMethodCallHandler
             }
-            if (call.method == "labBackgroundStart") {
+            if (call.method == "labBackgroundStart" || call.method == "labReminderStart") {
                 if (!probeForeground || probeRunning.get() || multiRunning.get() ||
                     LabBackgroundRecorderService.isActive()) {
                     result.error("LAB_B_BUSY_OR_BACKGROUND_HOLD","Explicit visible start required",null)
@@ -51,7 +63,8 @@ class MainActivity : FlutterActivity() {
                     return@setMethodCallHandler
                 }
                 try {
-                    LabBackgroundRecorderService.begin(applicationContext)
+                    LabBackgroundRecorderService.begin(applicationContext,
+                        acceleratedC=call.method=="labReminderStart")
                     result.success(LabBackgroundRecorderService.status())
                 } catch (e:Exception) {
                     val code=e.message?.takeIf{Regex("^[A-Z][A-Z0-9_]{1,63}$").matches(it)}
@@ -206,10 +219,12 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         probeForeground = true
+        LabBackgroundRecorderService.setUiForeground(true)
     }
 
     override fun onPause() {
         probeForeground = false
+        LabBackgroundRecorderService.setUiForeground(false)
         if (probeRunning.get()) probeStop.set(true)
         if (multiRunning.get()) multiMode.compareAndSet(0,1)
         super.onPause()
