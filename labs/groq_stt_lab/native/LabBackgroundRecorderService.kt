@@ -20,6 +20,9 @@ import java.util.concurrent.atomic.AtomicInteger
 class LabBackgroundRecorderService : Service() {
     companion object {
         private const val CHANNEL="lab_b_mic_v1"
+        // C08: a user-configurable, high-importance reminder is separate from the microphone FGS.
+        private const val REMINDER_CHANNEL="lab_c_reminder_v38"
+        private const val REMINDER_ID=3702
         private const val STOP="LAB_B_USER_STOP"
         private const val START="LAB_B_EXPLICIT_START"
         private const val START_C="LAB_C_EXPLICIT_ACCELERATED_START"
@@ -62,6 +65,7 @@ class LabBackgroundRecorderService : Service() {
             val m=cModel ?: error("LAB_C_NOT_ACCELERATED_HOLD")
             m.continueRecording()
             cDelivery="CONTINUED"
+            instance?.dismissReminderNotification()
             instance?.showRecordingNotification()
         }
         fun cEnd() {
@@ -69,6 +73,7 @@ class LabBackgroundRecorderService : Service() {
             val m=cModel ?: error("LAB_C_NOT_ACCELERATED_HOLD")
             m.requestEnd()
             cDelivery="END_REQUESTED"
+            instance?.dismissReminderNotification()
             check(mode.compareAndSet(0,2)) { "LAB_C_ALREADY_STOPPING_HOLD" }
         }
         fun status():Map<String,Any> = mapOf("phase" to phase,"frames" to frames.get(),
@@ -100,6 +105,9 @@ class LabBackgroundRecorderService : Service() {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(NotificationChannel(CHANNEL,
                     "Lab 背景麥克風錄音",NotificationManager.IMPORTANCE_LOW))
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(NotificationChannel(REMINDER_CHANNEL,
+                    "Lab 兩小時提醒",NotificationManager.IMPORTANCE_HIGH))
             val stop=PendingIntent.getService(this,3601,
                 Intent(this,LabBackgroundRecorderService::class.java).setAction(STOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -168,6 +176,7 @@ class LabBackgroundRecorderService : Service() {
                 phase="hold"
             } finally {
                 active.set(false)
+                dismissReminderNotification()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -189,18 +198,25 @@ class LabBackgroundRecorderService : Service() {
             .notify(3601,running)
     }
 
+    private fun dismissReminderNotification() {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(REMINDER_ID)
+    }
+
     private fun showReminderNotification() {
         val open=PendingIntent.getActivity(this,3702,
             Intent(this,MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val notification=Notification.Builder(this,CHANNEL)
+        val notification=Notification.Builder(this,REMINDER_CHANNEL)
+            .setCategory(Notification.CATEGORY_REMINDER)
+            .setPriority(Notification.PRIORITY_HIGH)
+            .setAutoCancel(false)
             .setContentTitle("加速模擬：兩小時提醒")
             .setContentText("錄音不中斷；返回 Lab 選擇繼續或結束")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true).setContentIntent(open).build()
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-            .notify(3601,notification)
+            .notify(REMINDER_ID,notification)
     }
 
     override fun onDestroy() {
