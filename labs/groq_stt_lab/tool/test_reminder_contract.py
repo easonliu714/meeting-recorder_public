@@ -54,6 +54,22 @@ class GateCModelContract(unittest.TestCase):
         for token in ("HttpClient", "Files.delete(", "START_STICKY", "apiKey"):
             self.assertNotIn(token, SERVICE)
 
+    def test_c08_reminder_does_not_replace_microphone_fgs(self):
+        self.assertIn('private const val CHANNEL="lab_b_mic_v1"', SERVICE)
+        self.assertIn('private const val REMINDER_CHANNEL="lab_c_reminder_v38"', SERVICE)
+        self.assertIn('private const val REMINDER_ID=3702', SERVICE)
+        self.assertIn('NotificationManager.IMPORTANCE_LOW', SERVICE)
+        self.assertIn('NotificationManager.IMPORTANCE_HIGH', SERVICE)
+        self.assertIn('Notification.Builder(this,REMINDER_CHANNEL)', SERVICE)
+        self.assertIn('.notify(REMINDER_ID,notification)', SERVICE)
+        self.assertIn('.notify(3601,running)', SERVICE)
+        self.assertIn('startForeground(3601,notification', SERVICE)
+        self.assertIn('dismissReminderNotification()', SERVICE)
+        self.assertIn('PendingIntent.getActivity(this,3702', SERVICE)
+        reminder = SERVICE.split('private fun showReminderNotification()', 1)[1].split('override fun onDestroy()', 1)[0]
+        self.assertNotIn('.notify(3601,', reminder)
+        self.assertNotIn('startActivity(', reminder)
+
     def test_no_provider_or_delete_in_core(self):
         for token in ("HttpClient", "Files.delete", "Groq", "apiKey"):
             self.assertNotIn(token, MODEL)
