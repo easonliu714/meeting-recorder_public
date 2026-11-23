@@ -42,7 +42,7 @@ class GroqLabHome extends StatefulWidget {
   State<GroqLabHome> createState() => _GroqLabHomeState();
 }
 
-class _GroqLabHomeState extends State<GroqLabHome> {
+class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
   final _pipeline = const LabAudioPipeline();
   final _nativePartPts = const LabPartNativePtsScanner();
   final _micRecorder = const LabMicCapture();
@@ -74,6 +74,15 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   String _backgroundStatus='尚未啟動背景錄音';
   bool _backgroundRunning=false;
   bool _backgroundBusy=false;
+  Timer? _cTimer;
+  bool _cRunning=false;
+  bool _cBusy=false;
+  bool _cPolling=false;
+  bool _cPending=false;
+  bool _cPromptShown=false;
+  bool _cDialogShowing=false;
+  String _cPhase='NONE';
+  String _cStatus='尚未執行加速模擬。';
   bool _busy = false;
   bool _stagingAudio = false;
   bool _cancelStagingRequested = false;
@@ -91,14 +100,24 @@ class _GroqLabHomeState extends State<GroqLabHome> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _debug.record('LAB_APP_OPEN',
         {'version': '0.4.31+36', 'git': LabBuildInfo.sourceSha});
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _multiTimer?.cancel();
+    _cTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshC());
+    }
   }
 
   Future<void> _pollMultiProgress() async {
@@ -226,6 +245,104 @@ class _GroqLabHomeState extends State<GroqLabHome> {
       if(mounted) setState(()=>_backgroundStatus='已要求停止；請點擊「查詢背景錄音狀態」');
     } catch(e) {
       _debug.record('LAB_B_HOLD', {'code':LabDebugJournal.failureCode(e)});
+    }
+  }
+
+  // Gate C only: a 900x simulated monotonic clock over the existing
+  // 24-second four-Part recorder. This is NOT a 120-minute endurance claim.
+  Future<void> _startC() async {
+    if (_busy || _cBusy || _cRunning || _backgroundRunning) return;
+    setState(() { _cBusy=true; _cPromptShown=false; _cPending=false; });
+    try {
+      final result=await _multiChannel.invokeMapMethod<String,dynamic>('labReminderStart');
+      if (result?['cEnabled']!=true) throw StateError('LAB_C_START_HOLD');
+      _debug.record('LAB_C_SIM_START', {'multiplier':900});
+      if (mounted) {
+        setState(() { _cRunning=true; _cStatus='加速模擬已開始；等待 120 分鐘提醒。'; });
+        _cTimer?.cancel();
+        _cTimer=Timer.periodic(const Duration(milliseconds: 650),
+            (_) => unawaited(_refreshC()));
+      }
+    } catch(e) {
+      final code=LabDebugJournal.failureCode(e);
+      _debug.record('LAB_C_HOLD', {'code':code});
+      if (mounted) setState(() { _cRunning=false; _cStatus='HOLD：'+code; });
+    } finally { if(mounted) setState(()=>_cBusy=false); }
+  }
+
+  Future<void> _refreshC() async {
+    if (_cPolling) return;
+    _cPolling=true;
+    try {
+      final result=await _multiChannel.invokeMapMethod<String,dynamic>('labReminderStatus');
+      if (result==null) return;
+      final phase=result['phase']; final cPhase=result['cPhase'];
+      final cEnabled=result['cEnabled']; final pending=result['cPending'];
+      final elapsed=result['cElapsedSimMs']; final speed=result['cClockMultiplier'];
+      final parts=result['committed']; final frames=result['frames'];
+      if(phase is! String || cPhase is! String || cEnabled is! bool ||
+          pending is! bool || elapsed is! int || elapsed<0 || speed!=900 ||
+          parts is! int || parts<0 || parts>4 || frames is! int ||
+          frames<0 || frames>384000) throw StateError('LAB_C_STATUS_HOLD');
+      if(!mounted || !cEnabled) return;
+      final running=phase=='recording'||phase=='starting';
+      setState(() {
+        _cPhase=cPhase; _cPending=pending; _cRunning=running;
+        _cStatus='加速模擬 '+(elapsed/60000).toStringAsFixed(1)+
+          ' 分鐘；提醒 '+cPhase+'；錄音 '+phase+
+          '；已提交 '+parts.toString()+' 段；樣本 '+frames.toString();
+      });
+      if(pending && !_cPromptShown && running) _showCPrompt();
+      if(!running) _cTimer?.cancel();
+      _debug.record('LAB_C_STATUS', {'phase':cPhase,'pending':pending,
+          'elapsed_ms':elapsed,'committed':parts,'frames':frames});
+    } catch(e) {
+      _debug.record('LAB_C_HOLD', {'code':LabDebugJournal.failureCode(e)});
+    } finally { _cPolling=false; }
+  }
+
+  void _showCPrompt() {
+    if(_cPromptShown||_cDialogShowing||!mounted) return;
+    _cPromptShown=true;
+    _cDialogShowing=true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if(!mounted) { _cDialogShowing=false; return; }
+      showDialog<void>(context:context,barrierDismissible:false,
+        builder:(dialogContext)=>AlertDialog(
+          title:const Text('加速模擬：120 分鐘提醒'),
+          content:const Text('錄音仍在進行。選擇繼續或結束並封存。此為加速測試，非真正兩小時錄音。'),
+          actions:[
+            TextButton(onPressed:(){
+              Navigator.of(dialogContext).pop();
+              unawaited(_chooseC('labReminderContinue'));
+            },child:const Text('繼續錄音')),
+            TextButton(onPressed:(){
+              Navigator.of(dialogContext).pop();
+              unawaited(_chooseC('labReminderEnd'));
+            },child:const Text('結束並封存')),
+          ],
+        ),
+      ).whenComplete(()=>_cDialogShowing=false);
+    });
+  }
+
+  Future<void> _chooseC(String method) async {
+    if(_cBusy) return;
+    setState(()=>_cBusy=true);
+    try {
+      final result=await _multiChannel.invokeMapMethod<String,dynamic>(method);
+      if(result==null || result['cEnabled']!=true) {
+        throw StateError('LAB_C_CHOICE_RECEIPT_HOLD');
+      }
+      _debug.record(method=='labReminderContinue'?'LAB_C_CONTINUE':'LAB_C_END_REQUESTED');
+      if(mounted) setState(()=>_cPending=false);
+    } catch(e) {
+      final code=LabDebugJournal.failureCode(e);
+      _debug.record('LAB_C_HOLD', {'code':code});
+      if(mounted) setState(()=>_cStatus='HOLD：'+code);
+    } finally {
+      if(mounted) setState(()=>_cBusy=false);
+      unawaited(_refreshC());
     }
   }
 
@@ -1336,6 +1453,38 @@ class _GroqLabHomeState extends State<GroqLabHome> {
                   child: const Text('手動核對背景錄音 Part'),
                 ),
                 Text(_backgroundStatus),
+                const Divider(),
+                const Text('LAB-REC-C｜兩小時提醒（加速模擬）'),
+                const Text('900 倍測試時計：實際約 8 秒模擬 120 分鐘。'
+                    '錄音仍使用最多 24 秒／4 Part 的 Lab 麥克風服務；'
+                    '提醒等待期間不中斷麥克風，正常 120 分鐘耐久不在此版驗證。'),
+                FilledButton.tonal(
+                  key:const Key('lab-c-start'),
+                  onPressed:_busy||_cBusy||_cRunning||_backgroundRunning ? null : _startC,
+                  child:const Text('開始 24 秒兩小時提醒加速模擬'),
+                ),
+                OutlinedButton(
+                  key:const Key('lab-c-status'),
+                  onPressed:_cBusy ? null : _refreshC,
+                  child:const Text('查詢兩小時提醒狀態'),
+                ),
+                if(_cPending) const Text('提醒待確認：錄音持續中，請選擇繼續或結束。'),
+                OutlinedButton(
+                  key:const Key('lab-c-continue'),
+                  onPressed:_cPending&&!_cBusy ? ()=>_chooseC('labReminderContinue') : null,
+                  child:const Text('繼續錄音'),
+                ),
+                OutlinedButton(
+                  key:const Key('lab-c-end'),
+                  onPressed:_cPending&&!_cBusy ? ()=>_chooseC('labReminderEnd') : null,
+                  child:const Text('結束並封存'),
+                ),
+                OutlinedButton(
+                  key:const Key('lab-c-readback'),
+                  onPressed:_busy||_cRunning ? null : ()=>_runMultiPart(capture:false),
+                  child:const Text('核對提醒測試已提交 Part'),
+                ),
+                Text(_cStatus),
               ],
             ),
           ]),
