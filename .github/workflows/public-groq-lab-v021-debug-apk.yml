@@ -1,8 +1,7 @@
 name: Public Groq STT Lab v36 Gate C clock core source-only regression
 on:
-  push:
-    branches:
-      - lab/public-v021-pcm-window-evidence-20261119
+  workflow_dispatch:
+    # Bounded Gate C source integration: push CI restored at delivery HEAD.
 
 permissions:
   contents: read
