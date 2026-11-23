@@ -118,7 +118,8 @@ internal object LabMultiPartCapture {
         check(minimum>0) { "LAB_MULTI_CONFIG_HOLD" }
         val recorder=AudioRecord(MediaRecorder.AudioSource.MIC,RATE,AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,maxOf(minimum,16384))
-        val queue=ArrayBlockingQueue<ByteArray>(if(hardwareD)64 else 16)
+        val queue=if(hardwareD) ArrayBlockingQueue<ByteArray>(64)
+            else ArrayBlockingQueue<ByteArray>(16)
         val done=AtomicBoolean(false)
         val normal=AtomicBoolean(false)
         val diskError=AtomicReference<Exception?>(null)
