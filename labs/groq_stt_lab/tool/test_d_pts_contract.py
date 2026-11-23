@@ -35,7 +35,7 @@ class LabDPtsContract(unittest.TestCase):
         for s in ('"labDPtsStart"', '"labDPtsStop"', '"labDPtsStatus"', '"labDPtsRecover"',
                   "if (!probeForeground", "requestPermissions("):
             self.assertIn(s,ACTIVITY)
-        self.assertIn('lab_c_reminder_v39',SERVICE)
+        self.assertIn('lab_c_reminder_v40',SERVICE)
 
     def test_readback_pilot_not_long_recording_or_fake_gap_free(self):
         for s in ("開始 24 秒硬體 PTS 預檢", "核對硬體 PTS／已提交 Part",

@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v39.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v40.groq_stt_lab
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -9,7 +9,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Public isolated Lab v39: no network calls, source deletion or API keys. */
+/** Public isolated Lab v40: no network calls, source deletion or API keys. */
 class MainActivity : FlutterActivity() {
     private val audioWorker = Executors.newSingleThreadExecutor()
     private val probeRunning = AtomicBoolean(false)
@@ -25,7 +25,7 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
             "groq_stt_lab/offline_audio").setMethodCallHandler { call, result ->
             if (call.method == "labBackgroundStatus" || call.method == "labReminderStatus" ||
-                call.method == "labDPtsStatus") {
+                call.method == "labDPtsStatus" || call.method=="labDLongStatus") {
                 result.success(LabBackgroundRecorderService.status())
                 return@setMethodCallHandler
             }
@@ -44,6 +44,46 @@ class MainActivity : FlutterActivity() {
             if (call.method == "labBackgroundStop") {
                 LabBackgroundRecorderService.requestStop()
                 result.success(null)
+                return@setMethodCallHandler
+            }
+            if(call.method=="labDLongContinue" || call.method=="labDLongEnd") {
+                try {
+                    if(call.method=="labDLongContinue")LabBackgroundRecorderService.longContinue()
+                    else LabBackgroundRecorderService.longEnd()
+                    result.success(LabBackgroundRecorderService.status())
+                }catch(e:Exception){
+                    val code=e.message?.takeIf{Regex("^LAB_D_LONG_[A-Z0-9_]{2,55}_HOLD$").matches(it)}
+                        ?:"LAB_D_LONG_CHOICE_HOLD"
+                    result.error(code,"Long recording choice held",null)
+                }
+                return@setMethodCallHandler
+            }
+            if(call.method=="labDLongStop") {
+                if(!LabBackgroundRecorderService.isActive() ||
+                   LabBackgroundRecorderService.status()["longMode"]!=true) {
+                    result.error("LAB_D_LONG_NOT_ACTIVE_HOLD","Not a long recording",null)
+                } else {
+                    LabBackgroundRecorderService.requestStop()
+                    result.success(null)
+                }
+                return@setMethodCallHandler
+            }
+            if(call.method=="labDLongRecover") {
+                if(LabBackgroundRecorderService.isActive() || probeRunning.get() ||
+                    multiRunning.get()) {
+                    result.error("LAB_D_LONG_RECOVERY_BUSY_HOLD","Recording active",null)
+                    return@setMethodCallHandler
+                }
+                audioWorker.execute {
+                    try {
+                        val proof=LabDLongCapture.recover(applicationContext)
+                        runOnUiThread {result.success(proof)}
+                    }catch(e:Exception){
+                        val code=e.message?.takeIf{Regex("^LAB_[A-Z0-9_]{2,55}_HOLD$").matches(it)}
+                            ?:"LAB_D_LONG_RECOVERY_HOLD"
+                        runOnUiThread {result.error(code,"Long readback held",null)}
+                    }
+                }
                 return@setMethodCallHandler
             }
             if (call.method == "labDPtsStop") {
@@ -74,7 +114,7 @@ class MainActivity : FlutterActivity() {
                 return@setMethodCallHandler
             }
             if (call.method == "labBackgroundStart" || call.method == "labReminderStart" ||
-                call.method == "labDPtsStart") {
+                call.method == "labDPtsStart" || call.method=="labDLongStart") {
                 if (!probeForeground || probeRunning.get() || multiRunning.get() ||
                     LabBackgroundRecorderService.isActive()) {
                     result.error("LAB_B_BUSY_OR_BACKGROUND_HOLD","Explicit visible start required",null)
@@ -94,7 +134,8 @@ class MainActivity : FlutterActivity() {
                 try {
                     LabBackgroundRecorderService.begin(applicationContext,
                         acceleratedC=call.method=="labReminderStart",
-                         hardwareD=call.method=="labDPtsStart")
+                         hardwareD=call.method=="labDPtsStart",
+                         longD=call.method=="labDLongStart")
                     result.success(LabBackgroundRecorderService.status())
                 } catch (e:Exception) {
                     val code=e.message?.takeIf{Regex("^[A-Z][A-Z0-9_]{1,63}$").matches(it)}
