@@ -81,7 +81,6 @@ class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
   bool _cPending=false;
   bool _cPromptShown=false;
   bool _cDialogShowing=false;
-  String _cPhase='NONE';
   String _cStatus='尚未執行加速模擬。';
   bool _busy = false;
   bool _stagingAudio = false;
@@ -287,7 +286,7 @@ class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
       if(!mounted || !cEnabled) return;
       final running=phase=='recording'||phase=='starting';
       setState(() {
-        _cPhase=cPhase; _cPending=pending; _cRunning=running;
+        _cPending=pending; _cRunning=running;
         _cStatus='加速模擬 '+(elapsed/60000).toStringAsFixed(1)+
           ' 分鐘；提醒 '+cPhase+'；錄音 '+phase+
           '；已提交 '+parts.toString()+' 段；樣本 '+frames.toString();
