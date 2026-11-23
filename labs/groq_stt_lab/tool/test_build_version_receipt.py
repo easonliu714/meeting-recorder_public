@@ -14,7 +14,7 @@ def identity_is_consistent(workflow: str, pubspec: str, debug: str) -> bool:
         'versionCode = 40' in debug,
         'public_lab_v40.groq_stt_lab' in debug,
         'echo "VERSION=0.4.35+40"' in workflow,
-        '--build-name=0.4.35 --build-number=39' in workflow,
+        '--build-name=0.4.35 --build-number=40' in workflow,
         "versionName='0.4.35'" in workflow,
         "versionCode='40'" in workflow,
         'public_lab_v40.groq_stt_lab' in workflow,
