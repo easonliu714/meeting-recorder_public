@@ -70,6 +70,19 @@ class GateCModelContract(unittest.TestCase):
         self.assertNotIn('.notify(3601,', reminder)
         self.assertNotIn('startActivity(', reminder)
 
+    def test_c12_readback_is_visible_in_c_panel_and_never_resumes(self):
+        self.assertIn("Future<void> _readbackC() async", UI)
+        self.assertIn("await _runMultiPart(capture:false)", UI)
+        self.assertIn("來源 Session 身分：NOT_VERIFIED", UI)
+        self.assertIn("錄音不自動續錄", UI)
+        self.assertIn("_multiReceipts.join('；')", UI)
+        self.assertIn("onPressed:_busy||_cBusy||_cRunning ? null : _readbackC", UI)
+        recovery = UI.split("Future<void> _readbackC() async", 1)[1].split("Future<void> _runMultiPart", 1)[0]
+        for unsafe in ("labMultiStart", "labReminderStart", "labBackgroundStart", "Files.delete", "writeAsBytes"):
+            self.assertNotIn(unsafe, recovery)
+        self.assertIn("(status == 'completed' && tail != 0)", UI)
+        self.assertIn("start != end", UI)
+
     def test_no_provider_or_delete_in_core(self):
         for token in ("HttpClient", "Files.delete", "Groq", "apiKey"):
             self.assertNotIn(token, MODEL)
