@@ -3,7 +3,7 @@ import 'package:groq_stt_lab/lab_debug_log.dart';
 
 void main() {
   test('exported filename is derived from actual APK identity', () {
-    expect(LabBuildInfo.exportNameStem, 'groq_lab_v0_4_32_build38');
+    expect(LabBuildInfo.exportNameStem, 'groq_lab_v0_4_33_build38');
   });
 
   test('exported diagnostic is versioned, bounded and never includes paths', () {
