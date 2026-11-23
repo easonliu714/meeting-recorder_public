@@ -228,12 +228,14 @@ jobs:
           artifact-ids: ${{ steps.immutable_lab_apk.outputs.artifact-id }}
           path: labs/groq_stt_lab/readback/
 
+      # Downloading by immutable artifact ID places exactly one named subdirectory.
+      # Require the extracted APK/receipt there; compare bytes and ZIP CRC, never skip.
       - name: Confirm downloaded APK CRC and byte identity
         if: env.LAB_BUILD_MODE == 'delivery'
         working-directory: labs/groq_stt_lab
         run: |
           set -euo pipefail
-          cmp out/groq-stt-lab-v0.4.33+38-public-debug.apk readback/groq-stt-lab-v0.4.33+38-public-debug.apk
-          cmp out/public-v038-provenance.txt readback/public-v038-provenance.txt
-          unzip -tq readback/groq-stt-lab-v0.4.33+38-public-debug.apk
+          cmp out/groq-stt-lab-v0.4.33+38-public-debug.apk readback/public-groq-lab-v038-debug/groq-stt-lab-v0.4.33+38-public-debug.apk
+          cmp out/public-v038-provenance.txt readback/public-groq-lab-v038-debug/public-v038-provenance.txt
+          unzip -tq readback/public-groq-lab-v038-debug/groq-stt-lab-v0.4.33+38-public-debug.apk
           echo "PUBLIC_ARTIFACT_READBACK_APK_CRC_AND_BYTE_IDENTITY_PASS"
