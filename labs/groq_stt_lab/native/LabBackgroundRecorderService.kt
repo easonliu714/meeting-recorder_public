@@ -28,6 +28,7 @@ class LabBackgroundRecorderService : Service() {
         @Volatile private var cRealStartMs=0L
         @Volatile private var cUiForeground=true
         @Volatile private var cDelivery="NONE"
+        @Volatile private var instance:LabBackgroundRecorderService?=null
         private val active=AtomicBoolean(false)
         private val mode=AtomicInteger(0)
         private val frames=AtomicInteger(0)
@@ -61,6 +62,7 @@ class LabBackgroundRecorderService : Service() {
             val m=cModel ?: error("LAB_C_NOT_ACCELERATED_HOLD")
             m.continueRecording()
             cDelivery="CONTINUED"
+            instance?.showRecordingNotification()
         }
         fun cEnd() {
             check(active.get() && phase=="recording") { "LAB_C_NOT_RECORDING_HOLD" }
@@ -79,6 +81,7 @@ class LabBackgroundRecorderService : Service() {
     }
     override fun onBind(intent:Intent?):IBinder?=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
+        instance=this
         if(intent?.action==STOP) {
             requestStop()
             return START_NOT_STICKY
@@ -171,6 +174,21 @@ class LabBackgroundRecorderService : Service() {
         }.start()
         return START_NOT_STICKY
     }
+    private fun showRecordingNotification() {
+        val stop=PendingIntent.getService(this,3601,
+            Intent(this,LabBackgroundRecorderService::class.java).setAction(STOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val running=Notification.Builder(this,CHANNEL)
+            .setContentTitle("Groq STT Lab｜背景錄音中")
+            .setContentText("提醒已確認繼續；麥克風仍在錄音")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .addAction(Notification.Action.Builder(android.R.drawable.ic_media_pause,
+                "停止並封存",stop).build()).build()
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(3601,running)
+    }
+
     private fun showReminderNotification() {
         val open=PendingIntent.getActivity(this,3702,
             Intent(this,MainActivity::class.java)
@@ -186,6 +204,7 @@ class LabBackgroundRecorderService : Service() {
     }
 
     override fun onDestroy() {
+        if(instance===this) instance=null
         mode.compareAndSet(0,1)
         super.onDestroy()
     }
