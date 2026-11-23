@@ -13,6 +13,7 @@ import 'lab_mic_capture.dart';
 import 'lab_mic_checkpoint.dart';
 import 'lab_mic_interrupt_probe.dart';
 import 'lab_debug_log.dart';
+import 'lab_d_pts_panel.dart';
 import 'lab_groq_free_usage_monitor.dart';
 import 'lab_groq_stt_panel.dart';
 import 'lab_groq_merged_review.dart';
@@ -101,7 +102,7 @@ class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.33+38', 'git': LabBuildInfo.sourceSha});
+        {'version': '0.4.34+39', 'git': LabBuildInfo.sourceSha});
   }
 
   @override
@@ -1499,6 +1500,7 @@ class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
                   child:const Text('核對提醒測試已提交 Part'),
                 ),
                 Text(_cStatus),
+                LabDPtsPanel(debug:_debug),
               ],
             ),
           ]),

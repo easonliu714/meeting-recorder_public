@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v38.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v39.groq_stt_lab
 
 import android.Manifest
 import android.app.Notification
@@ -21,12 +21,17 @@ class LabBackgroundRecorderService : Service() {
     companion object {
         private const val CHANNEL="lab_b_mic_v1"
         // C08: a user-configurable, high-importance reminder is separate from the microphone FGS.
-        private const val REMINDER_CHANNEL="lab_c_reminder_v38"
+        private const val REMINDER_CHANNEL="lab_c_reminder_v39"
         private const val REMINDER_ID=3702
         private const val STOP="LAB_B_USER_STOP"
         private const val START="LAB_B_EXPLICIT_START"
         private const val START_C="LAB_C_EXPLICIT_ACCELERATED_START"
+        private const val START_D="LAB_D_EXPLICIT_HARDWARE_PTS_START"
         private const val C_SPEED=900L // 120 simulated minutes over 8 real seconds.
+        // D is a physical 24s hardware timestamp pilot, never a 120min claim.
+        @Volatile private var dHardwarePts=false
+        @Volatile private var dPtsResult="NOT_VERIFIED"
+        @Volatile private var dPtsSamples=0
         @Volatile private var cModel:LabTwoHourReminder?=null
         @Volatile private var cRealStartMs=0L
         @Volatile private var cUiForeground=true
@@ -43,7 +48,8 @@ class LabBackgroundRecorderService : Service() {
         @Volatile private var tailBytes=0L
         fun isActive()=active.get()
         fun setUiForeground(foreground:Boolean) { cUiForeground=foreground }
-        fun begin(context:Context, acceleratedC:Boolean=false) {
+        fun begin(context:Context, acceleratedC:Boolean=false, hardwareD:Boolean=false) {
+            check(!(acceleratedC && hardwareD)){"LAB_D_MODE_HOLD"}
             check(Build.VERSION.SDK_INT>=26){"LAB_B_ANDROID_VERSION_HOLD"}
             check(active.compareAndSet(false,true)){"LAB_B_ALREADY_RUNNING_HOLD"}
             mode.set(0);frames.set(0);committed.set(0)
@@ -51,9 +57,10 @@ class LabBackgroundRecorderService : Service() {
             cModel=if(acceleratedC) LabTwoHourReminder(0L) else null
             cRealStartMs=SystemClock.elapsedRealtime()
             cDelivery="NONE"
+            dHardwarePts=hardwareD;dPtsResult="NOT_VERIFIED";dPtsSamples=0
             try {
                 context.startForegroundService(Intent(context,LabBackgroundRecorderService::class.java)
-                    .setAction(if(acceleratedC) START_C else START))
+                    .setAction(if(hardwareD) START_D else if(acceleratedC) START_C else START))
             } catch(e:Exception) {
                 active.set(false);phase="hold";code="LAB_B_SERVICE_START_HOLD"
                 throw IllegalStateException(code,e)
@@ -82,7 +89,8 @@ class LabBackgroundRecorderService : Service() {
             "cEnabled" to (cModel!=null),"cPhase" to (cModel?.state()?.name ?: "NONE"),
             "cPending" to (cModel?.pendingOnReturn() ?: false),
             "cElapsedSimMs" to (cModel?.elapsedMs() ?: 0L),
-            "cDelivery" to cDelivery,"cClockMultiplier" to C_SPEED)
+            "cDelivery" to cDelivery,"cClockMultiplier" to C_SPEED,
+            "dMode" to dHardwarePts,"dPtsStatus" to dPtsResult,"dPtsCount" to dPtsSamples)
     }
     override fun onBind(intent:Intent?):IBinder?=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
@@ -91,10 +99,11 @@ class LabBackgroundRecorderService : Service() {
             requestStop()
             return START_NOT_STICKY
         }
-        if(intent?.action !in setOf(START,START_C) || !active.get()) {
+        if(intent?.action !in setOf(START,START_C,START_D) || !active.get()) {
             stopSelf(startId);return START_NOT_STICKY
         }
-        if((intent?.action==START_C)!=(cModel!=null)) {
+        if((intent?.action==START_C)!=(cModel!=null) ||
+           (intent?.action==START_D)!=dHardwarePts) {
             phase="hold";code="LAB_C_START_MODE_HOLD";active.set(false)
             stopSelf(startId);return START_NOT_STICKY
         }
@@ -153,12 +162,17 @@ class LabBackgroundRecorderService : Service() {
         }
         Thread {
             try {
-                val result=LabMultiPartCapture.capture(applicationContext,mode,frames,committed)
+                val result=LabMultiPartCapture.capture(applicationContext,mode,frames,committed,
+                    hardwareD=dHardwarePts)
                 val status=result["status"] as? String ?:error("LAB_B_RECEIPT_HOLD")
                 val parts=result["parts"] as? List<*> ?:error("LAB_B_RECEIPT_HOLD")
                 val tail=result["tailBytes"] as? Long ?:error("LAB_B_RECEIPT_HOLD")
                 check(status in setOf("completed","interrupted","uncommitted")){"LAB_B_RECEIPT_HOLD"}
                 resultStatus=status;resultParts=parts.size;tailBytes=tail
+                if(dHardwarePts) {
+                    dPtsResult=result["dPtsStatus"] as? String ?: "NOT_VERIFIED"
+                    dPtsSamples=result["dPtsCount"] as? Int ?: 0
+                }
                 if(reminder!=null) {
                     if(reminder.state()==LabTwoHourReminder.Phase.STOP_REQUESTED) {
                         check(status=="completed" && parts.isNotEmpty() && tail==0L) {

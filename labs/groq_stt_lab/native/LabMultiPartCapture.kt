@@ -1,8 +1,9 @@
-package com.example.meeting_recorder.public_lab_v38.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v39.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioTimestamp
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.SystemClock
@@ -48,17 +49,31 @@ internal object LabMultiPartCapture {
             if(index>receipts.size) tailBytes+=f.length()
         }
         check(receipts.size<=PART_COUNT && (recovery?.finished!=true || tailBytes==0L)) { "LAB_MULTI_TAIL_HOLD" }
+        val marker=File(folder,"d_pts_mode_v1.txt")
+        val isD=Files.exists(marker.toPath(),LinkOption.NOFOLLOW_LINKS)
+        if(isD) check(regular(marker) && marker.readText(Charsets.US_ASCII)=="v1\n") {
+            "LAB_D_PTS_MODE_HOLD"
+        }
+        val pts=if(isD) LabDPtsEvidence.read(folder) else emptyList()
+        val ptsState=if(isD) LabDPtsEvidence.inspect(pts) else "NOT_APPLICABLE"
         return mapOf("status" to when {
             recovery?.finished==true -> "completed"
             receipts.isEmpty() -> "uncommitted"
             else -> "interrupted"
         }, "parts" to receipts.map { r -> mapOf("index" to r.index,"start" to r.start,
-            "end" to r.end,"bytes" to r.bytes,"sha12" to r.sha.take(12)) }, "tailBytes" to tailBytes)
+            "end" to r.end,"bytes" to r.bytes,"sha12" to r.sha.take(12)) }, "tailBytes" to tailBytes,
+            "dMode" to isD, "dSession" to (if(isD)id.toString() else "NONE"),
+            "dPtsStatus" to ptsState, "dPtsCount" to pts.size,
+            "dHardwareFirst" to (pts.firstOrNull{it.hardwareFrames!=null}?.hardwareFrames ?: -1L),
+            "dHardwareLast" to (pts.lastOrNull{it.hardwareFrames!=null}?.hardwareFrames ?: -1L))
     }
-    fun recover(context:Context):Map<String,Any> {
+    fun recover(context:Context):Map<String,Any> = recoverPointer(context,"latest_attempt_v1.txt",false)
+    fun recoverD(context:Context):Map<String,Any> =
+        recoverPointer(context,"latest_d_attempt_v1.txt",true)
+    private fun recoverPointer(context:Context,pointerName:String,requireD:Boolean):Map<String,Any> {
         guard()
         val p=parent(context,false)
-        val pointer=File(p,"latest_attempt_v1.txt")
+        val pointer=File(p,pointerName)
         if(!regular(pointer)) error("LAB_MULTI_MISSING_HOLD")
         check(pointer.length()==36L) { "LAB_MULTI_POINTER_HOLD" }
         val name=pointer.readText(Charsets.US_ASCII)
@@ -67,15 +82,32 @@ internal object LabMultiPartCapture {
         check(folder.isDirectory && folder.absoluteFile==folder.canonicalFile) { "LAB_MULTI_POINTER_HOLD" }
         val r=snapshot(folder,UUID.fromString(name))
         check(pointer.readText(Charsets.US_ASCII)==name) { "LAB_MULTI_POINTER_HOLD" }
+        if(requireD) check(r["dMode"]==true) { "LAB_D_RECOVER_MODE_HOLD" }
         return r
     }
     /** mode: 0 running, 1 interrupt, 2 explicit normal finish. */
-    fun capture(context:Context,mode:AtomicInteger,captured:AtomicInteger,committed:AtomicInteger):Map<String,Any> {
+    fun capture(context:Context,mode:AtomicInteger,captured:AtomicInteger,committed:AtomicInteger,
+        hardwareD:Boolean=false):Map<String,Any> {
         guard()
         val p=parent(context,true)
         val id=UUID.randomUUID()
         val folder=File(p,id.toString())
         check(folder.mkdir()) { "LAB_MULTI_STORAGE_HOLD" }
+        if(hardwareD) {
+            // Separate D provenance: do not mistake a later A/B/C attempt for this session.
+            val marker=File(folder,"d_pts_mode_v1.txt")
+            check(marker.createNewFile()){"LAB_D_PTS_MODE_HOLD"}
+            FileOutputStream(marker).use {
+                it.write("v1\n".toByteArray(Charsets.US_ASCII));it.fd.sync()
+            }
+            val dtmp=File(p,"latest_d_$id.tmp")
+            check(dtmp.createNewFile()){"LAB_D_POINTER_HOLD"}
+            FileOutputStream(dtmp).use {
+                it.write(id.toString().toByteArray(Charsets.US_ASCII));it.fd.sync()
+            }
+            Files.move(dtmp.toPath(),File(p,"latest_d_attempt_v1.txt").toPath(),
+                StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)
+        }
         val tmp=File(p,"latest_$id.tmp")
         check(tmp.createNewFile()) { "LAB_MULTI_POINTER_HOLD" }
         FileOutputStream(tmp).use { it.write(id.toString().toByteArray(Charsets.US_ASCII)); it.fd.sync() }
@@ -86,7 +118,7 @@ internal object LabMultiPartCapture {
         check(minimum>0) { "LAB_MULTI_CONFIG_HOLD" }
         val recorder=AudioRecord(MediaRecorder.AudioSource.MIC,RATE,AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,maxOf(minimum,16384))
-        val queue=ArrayBlockingQueue<ByteArray>(16)
+        val queue=ArrayBlockingQueue<ByteArray>(if(hardwareD)64 else 16)
         val done=AtomicBoolean(false)
         val normal=AtomicBoolean(false)
         val diskError=AtomicReference<Exception?>(null)
@@ -112,6 +144,8 @@ internal object LabMultiPartCapture {
             val start=SystemClock.elapsedRealtimeNanos()
             val buffer=ByteArray(4096)
             var total=0
+            var nextPtsNs=0L
+            var ptsIndex=0
             while(total<MAX_BYTES && mode.get()==0) {
                 diskError.get()?.let { throw it }
                 check(SystemClock.elapsedRealtimeNanos()-start<45_000_000_000L) { "LAB_MULTI_TIMEOUT_HOLD" }
@@ -121,6 +155,23 @@ internal object LabMultiPartCapture {
                 // No storage wait on the microphone thread; overflow is HOLD.
                 check(queue.offer(buffer.copyOf(n))) { "LAB_MULTI_QUEUE_HOLD" }
                 total+=n;captured.set(total/2)
+                if(hardwareD) {
+                    val observed=SystemClock.elapsedRealtimeNanos()
+                    if(observed>=nextPtsNs && ptsIndex<16) {
+                        // Read an actual Android AudioRecord hardware framePosition. Never
+                        // synthesize it from total, wall time, or Part/sample indexes.
+                        val stamp=AudioTimestamp()
+                        val code=try {
+                            recorder.getTimestamp(stamp,AudioTimestamp.TIMEBASE_MONOTONIC)
+                        } catch(_:Exception) { AudioRecord.ERROR_INVALID_OPERATION }
+                        val native=if(code==AudioRecord.SUCCESS && stamp.nanoTime>0 &&
+                            stamp.framePosition>=0) stamp.framePosition else null
+                        val nativeNs=if(native!=null)stamp.nanoTime else null
+                        LabDPtsEvidence.publish(folder,++ptsIndex,
+                            LabDPtsEvidence.Sample(total.toLong()/2,native,nativeNs,observed))
+                        nextPtsNs=observed+4000000000L
+                    }
+                }
             }
             normal.set(mode.get()==2 || (total==MAX_BYTES && mode.get()==0))
         } catch(e:Exception) { captureError=e;normal.set(false) }

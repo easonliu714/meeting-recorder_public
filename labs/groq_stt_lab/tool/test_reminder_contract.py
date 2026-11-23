@@ -56,7 +56,7 @@ class GateCModelContract(unittest.TestCase):
 
     def test_c08_reminder_does_not_replace_microphone_fgs(self):
         self.assertIn('private const val CHANNEL="lab_b_mic_v1"', SERVICE)
-        self.assertIn('private const val REMINDER_CHANNEL="lab_c_reminder_v38"', SERVICE)
+        self.assertIn('private const val REMINDER_CHANNEL="lab_c_reminder_v39"', SERVICE)
         self.assertIn('private const val REMINDER_ID=3702', SERVICE)
         self.assertIn('NotificationManager.IMPORTANCE_LOW', SERVICE)
         self.assertIn('NotificationManager.IMPORTANCE_HIGH', SERVICE)
