@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v36.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v37.groq_stt_lab
 
 /**
  * Gate C reminder core: one immutable elapsed-realtime anchor per meeting.
