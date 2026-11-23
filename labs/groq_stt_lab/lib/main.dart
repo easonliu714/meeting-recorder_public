@@ -135,6 +135,21 @@ class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
     } finally { _multiPolling = false; }
   }
 
+  // C12: surface disk-verified committed Part receipts in the C panel after process death.
+  // Recovery is read-only and deliberately does not claim C session provenance.
+  Future<void> _readbackC() async {
+    if (_busy || _cBusy || _cRunning) return;
+    if (mounted) setState(() => _cStatus = '正在唯讀核對磁碟提交紀錄；不自動續錄。');
+    await _runMultiPart(capture:false);
+    if (!mounted) return;
+    setState(() {
+      _cStatus = '唯讀恢復（來源 Session 身分：NOT_VERIFIED；不得認定為本次 C 會議）：'
+          + _multiStatus + ' 已提交 Part：' + _multiCommitted.toString()
+          + '。' + (_multiReceipts.isEmpty ? '沒有可確認的提交段。' : _multiReceipts.join('；'))
+          + ' 未提交尾段不會補零、重送或覆寫；錄音不自動續錄。';
+    });
+  }
+
   Future<void> _runMultiPart({required bool capture}) async {
     if (_busy) return;
     setState(() {
@@ -1480,7 +1495,7 @@ class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
                 ),
                 OutlinedButton(
                   key:const Key('lab-c-readback'),
-                  onPressed:_busy||_cRunning ? null : ()=>_runMultiPart(capture:false),
+                  onPressed:_busy||_cBusy||_cRunning ? null : _readbackC,
                   child:const Text('核對提醒測試已提交 Part'),
                 ),
                 Text(_cStatus),
