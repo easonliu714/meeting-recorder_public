@@ -14,6 +14,38 @@ object LabDLongPtsHostTest {
     check(LabDLongPts.inspect(listOf(s1,s2.copy(hardwareFrames=null,hardwareNs=null)))=="NOT_VERIFIED")
     check(LabDLongPts.inspect(listOf(s1,s2.copy(hardwareFrames=13000L)))=="LAB_D_LONG_PTS_RESET_OR_STALL_HOLD")
     check(LabDLongPts.inspect(listOf(s1,s2.copy(hardwareFrames=47000L)))=="LAB_D_LONG_PTS_UNALIGNED_HOLD")
+    val intervals=LabDLongPts.crosswalk(listOf(s1,s2,s3))
+    check(intervals.size==2)
+    check(intervals[0]["crosses60"]==true && intervals[0]["crosses120"]==false)
+    check(intervals[1]["crosses60"]==false && intervals[1]["crosses120"]==true)
+    check(intervals[0]["hardwareMinusPcm"]==0L)
+    check(intervals[0]["hardwareClockMinusFramesNs"]==1000000000L)
+    check(intervals[0]["state"]=="WITHIN_DIAGNOSTIC_BOUND_NOT_GAP_FREE")
+    check(intervals[1]["hardwareClockMinusFramesNs"]==0L)
+    check(LabDLongPts.crosswalk(emptyList()).isEmpty())
+    check(LabDLongPts.crosswalk(listOf(s1)).isEmpty())
+    fun pair(b:LabDLongPts.Sample)=LabDLongPts.crosswalk(listOf(s1,b)).single()
+    val gap=pair(s2.copy(hardwareFrames=s2.hardwareFrames!!+32001L))
+    check(gap["hardwareMinusPcm"]==32001L && gap["state"]=="POSSIBLE_GAP")
+    val overlap=pair(s2.copy(hardwareFrames=s2.hardwareFrames!!-32001L))
+    check(overlap["hardwareMinusPcm"] == -32001L && overlap["state"]=="POSSIBLE_OVERLAP")
+    check(pair(s2.copy(hardwareFrames=s2.hardwareFrames!!+32000L))["state"]==
+        "WITHIN_DIAGNOSTIC_BOUND_NOT_GAP_FREE")
+    val unavailable=pair(s2.copy(hardwareFrames=null,hardwareNs=null))
+    check(unavailable["state"]=="UNKNOWN" && unavailable["hardwareMinusPcm"]==null &&
+        unavailable["crosses60"]==true)
+    val reset=pair(s2.copy(hardwareFrames=13000L))
+    check(reset["state"]=="RESET_OR_STALL" && reset["hardwareClockMinusFramesNs"]==null)
+    check(pair(s2.copy(hardwareNs=ns))["state"]=="RESET_OR_STALL")
+    val drift=pair(s2.copy(hardwareNs=s2.hardwareNs!!-4000000000L))
+    check(drift["state"]=="HARDWARE_CLOCK_UNALIGNED")
+    // The elapsed-realtime observation interval is kept separate, even
+    // if suspend changes its relation to the hardware monotonic timebase.
+    val suspended=pair(s2.copy(observedMonoNs=s2.observedMonoNs+90000000000L))
+    check(suspended["hardwareClockMinusFramesNs"]==1000000000L)
+    check(suspended["observedElapsedNs"]==s2.observedMonoNs+90000000000L-s1.observedMonoNs)
+    check(suspended["state"]=="WITHIN_DIAGNOSTIC_BOUND_NOT_GAP_FREE")
+    rejects{LabDLongPts.crosswalk(listOf(s1,s1))}
     rejects{LabDLongPts.inspect(listOf(s1,s1))}
     rejects{LabDLongPts.inspect(listOf(s1.copy(hardwareNs=null)))}
     rejects{LabDLongPts.inspect(listOf(s1.copy(capturedFrames=144000001)))}

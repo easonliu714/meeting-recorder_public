@@ -46,6 +46,19 @@ class DLongContracts(unittest.TestCase):
                       "StandardOpenOption.CREATE_NEW","ch.force(true)",
                       "NOT_VERIFIED"):
             self.assertIn(token,PTS)
+    def test_signed_crosswalk_and_current_app_open_version(self):
+        for token in ("fun crosswalk", "hardwareMinusPcm",
+                      "hardwareClockMinusFramesNs", "POSSIBLE_GAP",
+                      "POSSIBLE_OVERLAP", "RESET_OR_STALL",
+                      "WITHIN_DIAGNOSTIC_BOUND_NOT_GAP_FREE",
+                      "crosses60", "crosses120", "observedElapsedNs"):
+            self.assertIn(token, PTS)
+        self.assertIn("LabDLongPts.crosswalk(pts)", CAPTURE)
+        self.assertIn("ptsIntervals", UI)
+        self.assertIn("LAB_D_LONG_PTS_CROSSWALK_HOLD", UI)
+        main=(LAB/"lib/main.dart").read_text(encoding="utf8")
+        self.assertIn("${LabBuildInfo.versionName}+${LabBuildInfo.versionCode}", main)
+        self.assertNotIn("'version': '0.4.34+39'", main)
     def test_user_tap_permissions_and_verdict_truth(self):
         for token in ('"labDLongStart"','"labDLongStop"','"labDLongStatus"',
                       '"labDLongRecover"','"labDLongContinue"','"labDLongEnd"',

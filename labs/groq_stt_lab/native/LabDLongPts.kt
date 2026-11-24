@@ -45,6 +45,48 @@ internal object LabDLongPts {
         }
         return "HARDWARE_PTS_OBSERVED_NOT_GAP_FREE"
     }
+    /**
+     * Adjacent actual receipts only. A signed frame residual is an observation,
+     * not proof of the cause (buffer latency, clock drift, loss, or overlap).
+     * v1 observedMonoNs is elapsedRealtimeNanos; never subtract it directly
+     * from AudioTimestamp.TIMEBASE_MONOTONIC. Preserve every unknown interval.
+     */
+    fun crosswalk(items:List<Sample>):List<Map<String,Any?>> {
+        inspect(items) // same fail-closed validation as existing receipt readback
+        return items.zipWithNext().map { (a,b) ->
+            val pcm=b.capturedFrames-a.capturedFrames
+            val native=if(a.hardwareFrames!=null && b.hardwareFrames!=null)
+                b.hardwareFrames-a.hardwareFrames else null
+            val hardwareNs=if(a.hardwareNs!=null && b.hardwareNs!=null)
+                b.hardwareNs-a.hardwareNs else null
+            val residual=native?.minus(pcm)
+            // Configured 16 kHz: exactly 62,500 ns/frame. This is a
+            // diagnostic comparison, not a calibrated hardware error bound.
+            val clockResidual=if(native!=null && hardwareNs!=null &&
+                native>0 && hardwareNs>0) hardwareNs-native*62500L else null
+            val state=when {
+                native==null || hardwareNs==null -> "UNKNOWN"
+                native<=0 || hardwareNs<=0 -> "RESET_OR_STALL"
+                residual!!>32000L -> "POSSIBLE_GAP"
+                residual < -32000L -> "POSSIBLE_OVERLAP"
+                kotlin.math.abs(clockResidual!!)>2000000000L -> "HARDWARE_CLOCK_UNALIGNED"
+                else -> "WITHIN_DIAGNOSTIC_BOUND_NOT_GAP_FREE"
+            }
+            mapOf(
+                "pcmStart" to a.capturedFrames,
+                "pcmEnd" to b.capturedFrames,
+                "pcmDelta" to pcm,
+                "hardwareDelta" to native,
+                "hardwareMinusPcm" to residual,
+                "hardwareElapsedNs" to hardwareNs,
+                "hardwareClockMinusFramesNs" to clockResidual,
+                "observedElapsedNs" to (b.observedMonoNs-a.observedMonoNs),
+                "crosses60" to (a.capturedFrames<57600000L && b.capturedFrames>=57600000L),
+                "crosses120" to (a.capturedFrames<115200000L && b.capturedFrames>=115200000L),
+                "state" to state
+            )
+        }
+    }
     fun publish(folder:File,index:Int,s:Sample) {
         check(index in 1..MAX_COUNT){"LAB_D_LONG_PTS_LIMIT_HOLD"}
         inspect(listOf(s))

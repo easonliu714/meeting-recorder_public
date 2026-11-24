@@ -103,7 +103,7 @@ class _GroqLabHomeState extends State<GroqLabHome> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _debug.record('LAB_APP_OPEN',
-        {'version': '0.4.34+39', 'git': LabBuildInfo.sourceSha});
+        {'version': '${LabBuildInfo.versionName}+${LabBuildInfo.versionCode}', 'git': LabBuildInfo.sourceSha});
   }
 
   @override

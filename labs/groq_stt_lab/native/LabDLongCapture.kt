@@ -77,6 +77,7 @@ internal object LabDLongCapture {
             "session" to id.toString(),
             "ptsCount" to pts.size,
             "ptsStatus" to status,
+            "ptsIntervals" to LabDLongPts.crosswalk(pts),
             "crossHourHardwareObserved" to cross,
             "hardwareFirst" to (pts.firstOrNull{it.hardwareFrames!=null}?.hardwareFrames?:-1L),
             "hardwareLast" to (pts.lastOrNull{it.hardwareFrames!=null}?.hardwareFrames?:-1L),

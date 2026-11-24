@@ -18,7 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
-      LAB_BUILD_MODE: delivery
+      # Residual D source/test checkpoint; no rebuild of accepted v40 APK.
+      LAB_BUILD_MODE: source
       EXPECTED_APP_ID: com.example.meeting_recorder.public_lab_v40.groq_stt_lab
       PUBLIC_BASE_HEAD: c0c993c00c72e79b9b72697b4b2205b66168f026
       V21_HEAD: 710e0df35d02dd6c0883db68bb34db66174c427c
