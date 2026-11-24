@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v40.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v41.groq_stt_lab
 
 import java.nio.file.Files
 

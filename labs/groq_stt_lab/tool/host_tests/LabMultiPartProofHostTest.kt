@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v40.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v41.groq_stt_lab
 
 import java.io.File
 import java.io.FileOutputStream
@@ -189,6 +189,36 @@ fun main() {
             original.forEach{(name,bytes)->check(File(d,name).readBytes().contentEquals(bytes))}
             prior.forEach{LabMultiPartProof(d,id).verifiedWav(it.index,it.sha)}
             check(!File(d,"part_000003.commit").exists())
+        }
+        case("third receipt IO failure preserves two verified committed parts") { d,id,_ ->
+            LabMultiPartSink(d,id,12,3,{true}).use { s ->
+                s.accept(ByteArray(24){(it+1).toByte()});s.finish(false)
+            }
+            val prior=LabMultiPartProof(d,id).recoverSnapshot()
+            check(prior.receipts.size==2 && !prior.finished)
+            val third=wav(d,3,6,7)
+            File(d,"part_000003_inflight.pcm").writeBytes(ByteArray(12){7})
+            val original=d.listFiles()!!.associate { it.name to it.readBytes() }
+            val failed=LabMultiPartProof(d,id,{_,_->throw java.io.IOException("injected third receipt failure")})
+            check(runCatching{failed.commit(3)}.exceptionOrNull()?.message=="LAB_MULTI_RECEIPT_WRITE_HOLD")
+            val reopened=LabMultiPartProof(d,id)
+            check(reopened.recoverSnapshot()==prior)
+            prior.receipts.forEach{reopened.verifiedWav(it.index,it.sha)}
+            reject{reopened.verifiedWav(3,prior.receipts.last().sha)}
+            check(!File(d,"part_000003.commit").exists() && !File(d,"finished_v1.txt").exists())
+            original.forEach{(name,bytes)->check(File(d,name).readBytes().contentEquals(bytes))}
+            check(third.exists())
+            val torn=LabMultiPartProof(d,id,{dest,bytes->
+                check(dest.createNewFile())
+                FileOutputStream(dest).use{out->out.write(bytes,0,bytes.size/2);out.fd.sync()}
+                throw java.io.IOException("injected torn third receipt")
+            })
+            check(runCatching{torn.commit(3)}.exceptionOrNull()?.message=="LAB_MULTI_RECEIPT_WRITE_HOLD")
+            val afterTorn=LabMultiPartProof(d,id)
+            reject{afterTorn.recoverSnapshot()}
+            reject{afterTorn.commit(3)}
+            original.forEach{(name,bytes)->check(File(d,name).readBytes().contentEquals(bytes))}
+            check(File(d,"part_000003.commit").exists() && !File(d,"finished_v1.txt").exists())
         }
         println("HOST_REGRESSION=$count/$count PASS")
     } finally { base.deleteRecursively() }
