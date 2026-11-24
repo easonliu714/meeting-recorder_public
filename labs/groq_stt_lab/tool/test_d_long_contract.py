@@ -59,6 +59,22 @@ class DLongContracts(unittest.TestCase):
         main=(LAB/"lib/main.dart").read_text(encoding="utf8")
         self.assertIn("${LabBuildInfo.versionName}+${LabBuildInfo.versionCode}", main)
         self.assertNotIn("'version': '0.4.34+39'", main)
+    def test_sealed_wav_preview_is_local_and_requires_verified_receipt(self):
+        proof=(LAB/"native/LabMultiPartProof.kt").read_text()
+        for token in ("fun verifyRaw", "fun verifiedWav", "recoverSnapshot().receipts",
+                      "LAB_D_LONG_UNCOMMITTED_PLAYBACK_HOLD",
+                      "LAB_D_LONG_PLAYBACK_SHA_HOLD", "LAB_D_LONG_RAW_MATCH_HOLD"):
+            self.assertIn(token,proof)
+        for token in ("previewFile", "verifiedWav(index,sha)", '"sha256" to p.sha',
+                      '"rawMatches" to verifyOriginal'):
+            self.assertIn(token,CAPTURE)
+        for token in ('"labDLongPreview"', '"labDLongPreviewStop"', "FileInputStream(wav)",
+                      "player.release()", "sealedPreviewStop.set(true)", "10000L"):
+            self.assertIn(token,ACTIVITY)
+        for token in ("唯讀預聽 Part", "停止預聽", "完整 SHA256", "rawMatches",
+                      "LAB_D_LONG_PREVIEW_RESULT"):
+            self.assertIn(token,UI)
+        self.assertNotIn("sourcePath",UI)
     def test_user_tap_permissions_and_verdict_truth(self):
         for token in ('"labDLongStart"','"labDLongStop"','"labDLongStatus"',
                       '"labDLongRecover"','"labDLongContinue"','"labDLongEnd"',

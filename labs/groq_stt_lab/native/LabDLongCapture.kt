@@ -43,13 +43,14 @@ internal object LabDLongCapture {
         check(dir.isDirectory && dir.absoluteFile==dir.canonicalFile){"LAB_D_LONG_FOLDER_HOLD"}
         return dir
     }
-    private fun snapshot(dir:File,id:UUID):Map<String,Any> {
+    private fun snapshot(dir:File,id:UUID,verifyOriginal:Boolean=false):Map<String,Any> {
         val items=dir.listFiles()?:error("LAB_D_LONG_READBACK_HOLD")
         val hasCommitted=items.any{it.name.endsWith(".commit")}
         val finished=Files.exists(File(dir,"finished_v1.txt").toPath(),LinkOption.NOFOLLOW_LINKS)
         val proof=if(hasCommitted||finished)LabMultiPartProof(dir,id).recoverSnapshot() else null
         val parts=proof?.receipts?:emptyList()
         check(parts.size<=PART_LIMIT){"LAB_D_LONG_PART_LIMIT_HOLD"}
+        if(verifyOriginal) parts.forEach { LabMultiPartProof(dir,id).verifyRaw(it) }
         val rx=Regex("^part_([0-9]{6})_inflight[.]pcm$")
         var tail=0L
         items.forEach{file->
@@ -72,7 +73,8 @@ internal object LabDLongCapture {
                 else->"interrupted"
             },
             "parts" to parts.map{p->mapOf("index" to p.index,"start" to p.start,
-                "end" to p.end,"bytes" to p.bytes,"sha12" to p.sha.take(12))},
+                "end" to p.end,"bytes" to p.bytes,"sha12" to p.sha.take(12),
+                "sha256" to p.sha,"rawMatches" to verifyOriginal)},
             "tailBytes" to tail,
             "session" to id.toString(),
             "ptsCount" to pts.size,
@@ -94,9 +96,23 @@ internal object LabDLongCapture {
         check(uuid.matches(name)){"LAB_D_LONG_POINTER_HOLD"}
         val dir=File(folder,name)
         check(dir.isDirectory && dir.absoluteFile==dir.canonicalFile){"LAB_D_LONG_POINTER_HOLD"}
-        val result=snapshot(dir,UUID.fromString(name))
+        val result=snapshot(dir,UUID.fromString(name),true)
         check(pointer.readText(Charsets.US_ASCII)==name){"LAB_D_LONG_POINTER_HOLD"}
         return result
+    }
+    /** Resolve only the verified committed Part from the explicit current session. */
+    fun previewFile(context:Context,session:String,index:Int,sha:String):File {
+        check(uuid.matches(session) && index in 1..PART_LIMIT &&
+            Regex("^[0-9a-f]{64}$").matches(sha)){"LAB_D_LONG_PLAYBACK_INPUT_HOLD"}
+        val folder=base(context,false)
+        val pointer=File(folder,"latest_long_attempt_v1.txt")
+        check(regular(pointer) && pointer.length()==36L &&
+            pointer.readText(Charsets.US_ASCII)==session){"LAB_D_LONG_PLAYBACK_SESSION_HOLD"}
+        val dir=File(folder,session)
+        check(dir.isDirectory && dir.absoluteFile==dir.canonicalFile){"LAB_D_LONG_PLAYBACK_SESSION_HOLD"}
+        val wav=LabMultiPartProof(dir,UUID.fromString(session)).verifiedWav(index,sha)
+        check(pointer.readText(Charsets.US_ASCII)==session){"LAB_D_LONG_PLAYBACK_SESSION_HOLD"}
+        return wav
     }
     /**
      * mode 0=record; 1=interrupt (raw tail isolated); 2=user normal stop.

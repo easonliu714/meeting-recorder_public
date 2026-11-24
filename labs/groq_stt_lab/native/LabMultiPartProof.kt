@@ -96,6 +96,38 @@ internal class LabMultiPartProof(private val folder: File, private val session: 
     }
     fun recover(): List<Receipt> = recoverSnapshot().receipts
 
+    /** Verify original PCM against the already verified committed WAV payload, without writes. */
+    fun verifyRaw(r: Receipt) {
+        val raw = file(stem(r.index) + "_inflight.pcm")
+        val wav = file(stem(r.index) + ".wav")
+        check(regular(raw) && regular(wav) && raw.length() == r.bytes - 44L &&
+            wav.length() == r.bytes) { "LAB_D_LONG_RAW_MATCH_HOLD" }
+        java.io.DataInputStream(raw.inputStream().buffered()).use { a ->
+            java.io.DataInputStream(wav.inputStream().buffered()).use { b ->
+                val header = ByteArray(44); b.readFully(header)
+                val x = ByteArray(32768); val y = ByteArray(32768)
+                var left = r.bytes - 44L
+                while (left > 0) {
+                    val n = minOf(left, x.size.toLong()).toInt()
+                    a.readFully(x,0,n); b.readFully(y,0,n)
+                    check(x.contentEquals(y)) { "LAB_D_LONG_RAW_MATCH_HOLD" }
+                    left -= n
+                }
+                check(a.read() == -1 && b.read() == -1) { "LAB_D_LONG_RAW_MATCH_HOLD" }
+            }
+        }
+    }
+
+    /** Revalidate the full committed prefix and expected receipt before any local preview. */
+    fun verifiedWav(index: Int, expectedSha: String): File {
+        val r = recoverSnapshot().receipts.firstOrNull { it.index == index }
+            ?: error("LAB_D_LONG_UNCOMMITTED_PLAYBACK_HOLD")
+        check(r.sha == expectedSha) { "LAB_D_LONG_PLAYBACK_SHA_HOLD" }
+        verifyRaw(r)
+        return file(stem(index) + ".wav")
+    }
+
+
     /** Exclusive-create, fsync and exact readback; never overwrite an existing receipt.
      * CREATE_NEW is atomic for name creation, NOT atomic publication of its content.
      * A crash during write leaves a partial receipt; scan rejects it fail-closed.

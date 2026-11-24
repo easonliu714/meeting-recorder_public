@@ -16,6 +16,9 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
   Timer? _timer;
   bool _busy=false,_polling=false,_running=false,_pending=false,_dialog=false,_visible=true;
   String _phase='NONE';
+  String? _verifiedSession;
+  final _verifiedShas=<int,String>{};
+  bool _previewing=false;
   String _report='尚未開始真實 60／120 分鐘錄音。';
   @override void initState(){super.initState();WidgetsBinding.instance.addObserver(this);unawaited(_refresh());}
   @override void dispose(){WidgetsBinding.instance.removeObserver(this);_timer?.cancel();super.dispose();}
@@ -25,7 +28,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
   }
   Future<void> _start()async{
     if(_busy||_running)return;
-    setState(()=>_busy=true);
+    setState((){_busy=true;_verifiedSession=null;_verifiedShas.clear();});
     try{
       final p=await api.invokeMapMethod<String,dynamic>('labDLongStart');
       if(p?['longMode']!=true)throw StateError('LAB_D_LONG_START_HOLD');
@@ -116,6 +119,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
     if(_busy||_running)return;
     setState((){
       _busy=true;
+      _verifiedSession=null;_verifiedShas.clear();
       _report='正在對每段實體 WAV 重新校驗 SHA256，大檔案讀回可能較久。';
     });
     try{
@@ -133,18 +137,21 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
          !RegExp(r'^[0-9a-f-]{36}$').hasMatch(session)) {
         throw StateError('LAB_D_LONG_READBACK_HOLD');
       }
-      var last=0;final lines=<String>[];
+      var last=0;final lines=<String>[];final hashes=<int,String>{};
       for(final raw in parts){
         if(raw is! Map)throw StateError('LAB_D_LONG_READBACK_HOLD');
         final i=raw['index'],a=raw['start'],b=raw['end'];
-        final size=raw['bytes'],sha=raw['sha12'];
-        if(i!=lines.length+1||a!=last||b is! int||b<=last||
+        final size=raw['bytes'],sha=raw['sha12'],full=raw['sha256'];
+        if(i is! int||i!=lines.length+1||a!=last||b is! int||b<=last||
            b-last>57600000||size!=(b-last)*2+44||sha is! String||
-           !RegExp(r'^[0-9a-f]{12}$').hasMatch(sha)) {
+           !RegExp(r'^[0-9a-f]{12}$').hasMatch(sha)||
+           full is! String||!RegExp(r'^[0-9a-f]{64}$').hasMatch(full)||
+           !full.startsWith(sha)||raw['rawMatches']!=true) {
           throw StateError('LAB_D_LONG_READBACK_HOLD');
         }
         last=b;
-        lines.add('Part $i：$a–$b 樣本；$size B；SHA12 $sha');
+        hashes[i]=full;
+        lines.add('Part $i：$a–$b 樣本；$size B；完整 SHA256 $full；原始 PCM 位元組一致');
       }
       if(status=='completed'&&tail!=0||
          status=='uncommitted'&&parts.isNotEmpty) {
@@ -180,7 +187,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         'parts':lines.length,'frames':last,'tail_bytes_uncommitted':tail,
         'pts_state':pts,'pts_count':count,'cross_hour_hardware_observed':cross
       });
-      if(mounted)setState(()=>_report=
+      if(mounted)setState((){_verifiedSession=session;_verifiedShas.addAll(hashes);_report=
         '最新真實錄音磁碟 Session $session；'
         '跨程序來源身分：NOT_VERIFIED。'
         '狀態 $status；提交 '+lines.length.toString()+' 段；'
@@ -191,8 +198,27 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         + (evidence.isEmpty?'NOT_VERIFIED':evidence.join('\n'))
         +'。硬體時計與 elapsedRealtime 觀測間隔分開呈現。'
         'PTS 單調與 Part 連續不證明聲學無掉幀。'
-        '未提交資料不補零、重送、覆寫；不自動續錄。');
+        '未提交資料不補零、重送、覆寫；不自動續錄。';});
     }catch(e){_failure(e);}finally{if(mounted)setState(()=>_busy=false);}
+  }
+  Future<void> _preview(int index)async{
+    final session=_verifiedSession,sha=_verifiedShas[index];
+    if(_busy||_running||session==null||sha==null)return;
+    setState((){_busy=true;_previewing=true;});
+    try{
+      final p=await api.invokeMapMethod<String,dynamic>('labDLongPreview',
+        {'session':session,'index':index,'sha256':sha});
+      final ms=p?['positionMs'],stopped=p?['stopped'];
+      if(p?['index']!=index||ms is! int||ms<0||stopped is! bool){
+        throw StateError('LAB_D_LONG_PLAYBACK_HOLD');
+      }
+      widget.debug.record('LAB_D_LONG_PREVIEW_RESULT',{'index':index,'position_ms':ms,'stopped':stopped});
+      if(mounted)setState(()=>_report+='\nPart $index 預聽：$ms ms；'
+        +(stopped?'已停止':'已結束')+'。實際聽感須由使用者確認。');
+    }catch(e){_failure(e);}finally{if(mounted)setState((){_busy=false;_previewing=false;});}
+  }
+  Future<void> _stopPreview()async{
+    try{await api.invokeMethod<void>('labDLongPreviewStop');}catch(e){_failure(e);}
   }
   @override Widget build(BuildContext context)=>Column(children:[
     const Divider(),
@@ -226,6 +252,10 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
       key:const Key('lab-d-long-readback'),
       onPressed:_busy||_running?null:_recover,
       child:const Text('核對真實錄音 Part／硬體 PTS／SHA')),
+    for(final index in _verifiedShas.keys)
+      OutlinedButton(onPressed:_busy||_running?null:()=>_preview(index),
+        child:Text('唯讀預聽 Part $index（最多 10 秒）')),
+    if(_previewing) OutlinedButton(onPressed:_stopPreview,child:const Text('停止預聽')),
     Text(_report),
   ]);
 }

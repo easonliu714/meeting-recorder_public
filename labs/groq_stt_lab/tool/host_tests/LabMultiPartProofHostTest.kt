@@ -156,6 +156,40 @@ fun main() {
             check(f.readBytes().contentEquals(bytes) && source.readBytes().contentEquals(original))
             check(LabMultiPartProof(d,id).recover().single()==receipt)
         }
+        case("verified playback requires full committed SHA and exact raw payload") { d,id,_ ->
+            LabMultiPartSink(d,id,12,3,{true}).use { s ->
+                s.accept(ByteArray(28){(it+1).toByte()});s.finish(false)
+            }
+            val j=LabMultiPartProof(d,id)
+            val r=j.recoverSnapshot()
+            check(r.receipts.size==2 && !r.finished)
+            val first=r.receipts.first()
+            val f=j.verifiedWav(1,first.sha)
+            val old=f.readBytes()
+            check(f.name=="part_000001.wav" && first.sha.length==64)
+            reject { j.verifiedWav(1,"0".repeat(64)) }
+            reject { j.verifiedWav(3,first.sha) }
+            File(d,"part_000001_inflight.pcm").writeBytes(ByteArray(12){0})
+            reject { j.verifiedWav(1,first.sha) }
+            check(f.readBytes().contentEquals(old))
+            check(File(d,"part_000003_inflight.pcm").length()==4L)
+        }
+        case("two committed prefix plus storage fault and restart preserves bytes") { d,id,_ ->
+            var space=true
+            lateinit var prior:List<LabMultiPartProof.Receipt>
+            val original=mutableMapOf<String,ByteArray>()
+            LabMultiPartSink(d,id,12,3,{space}).use { s ->
+                s.accept(ByteArray(28){(it+1).toByte()})
+                prior=LabMultiPartProof(d,id).recover()
+                d.listFiles()!!.forEach{original[it.name]=it.readBytes()}
+                space=false;reject{s.accept(ByteArray(4){7})}
+            }
+            val recovered=LabMultiPartProof(d,id).recoverSnapshot()
+            check(recovered.receipts==prior && prior.size==2 && !recovered.finished)
+            original.forEach{(name,bytes)->check(File(d,name).readBytes().contentEquals(bytes))}
+            prior.forEach{LabMultiPartProof(d,id).verifiedWav(it.index,it.sha)}
+            check(!File(d,"part_000003.commit").exists())
+        }
         println("HOST_REGRESSION=$count/$count PASS")
     } finally { base.deleteRecursively() }
 }
