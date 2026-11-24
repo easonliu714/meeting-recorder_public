@@ -49,7 +49,26 @@ class LabDPtsContract(unittest.TestCase):
             self.assertNotIn(unsafe,UI)
         self.assertIn('"LabDPtsEvidence.kt"',BOOT)
         self.assertIn("LabDPtsEvidenceHostTest.kt",WORKFLOW)
-        self.assertIn("LAB_BUILD_MODE: delivery",WORKFLOW)
+        # Source-only checkpoints retain all blocking source regressions.
+        # APK creation and identity/readback checks are delivery-only.
+        self.assertRegex(WORKFLOW, r"(?m)^\s+LAB_BUILD_MODE: (source|delivery)$")
+        blocks=WORKFLOW.split("      - name: ")
+        for name in ("Run Gate A committed multi-Part JVM byte regression",
+                     "Run identity/PCM fail-closed regression then generate Android",
+                     "Flutter dependency resolution and complete positive/negative suite",
+                     "Compile native MediaCodec and committed multi-Part core"):
+            block=next(b for b in blocks if b.startswith(name+"\n"))
+            self.assertNotRegex(block,r"(?m)^        if:")
+            self.assertNotIn("continue-on-error:",block)
+        for name in ("Build isolated Debug APK only for delivery",
+                     "APK identity, DEX, privacy signer and SHA256 provenance",
+                     "Upload only checked Debug APK and sanitized provenance (5 days)",
+                     "Validate immutable Artifact ID before exact readback",
+                     "Read back exact uploaded Artifact ZIP and verify APK",
+                     "Confirm downloaded APK CRC and byte identity"):
+            block=next(b for b in blocks if b.startswith(name+"\n"))
+            self.assertIn("if: env.LAB_BUILD_MODE == 'delivery'",block)
+            self.assertNotIn("continue-on-error:",block)
 
 if __name__=="__main__":
     unittest.main()
