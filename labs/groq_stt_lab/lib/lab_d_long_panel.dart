@@ -128,12 +128,16 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
       final pts=p?['ptsStatus'],count=p?['ptsCount'],session=p?['session'];
       final cross=p?['crossHourHardwareObserved'];
       final intervals=p?['ptsIntervals'];
+      final observations=p?['ptsObservations'],provenance=p?['ptsProvenance'];
       if(p?['unaccelerated']!=true||parts is! List||parts.length>3||
          tail is! int||tail<0||tail>115200000||
          status is! String||!{'completed','interrupted','uncommitted'}.contains(status)||
          pts is! String||count is! int||count<0||count>48||
          cross is! bool||intervals is! List||
-         intervals.length!=(count>0?count-1:0)||session is! String||
+         intervals.length!=(count>0?count-1:0)||observations is! List||
+         observations.length!=count||
+         !{'NOT_VERIFIED','LOCAL_SESSION_RECORDER_BOUND_NOT_ATTESTED'}.contains(provenance)||
+         session is! String||
          !RegExp(r'^[0-9a-f-]{36}$').hasMatch(session)) {
         throw StateError('LAB_D_LONG_READBACK_HOLD');
       }
@@ -157,6 +161,23 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
          status=='uncommitted'&&parts.isNotEmpty) {
         throw StateError('LAB_D_LONG_READBACK_HOLD');
       }
+      final observationLines=<String>[];
+      const observationStates={'LEGACY_TIMEBASE_NOT_VERIFIED','HARDWARE_UNAVAILABLE_NOT_VERIFIED',
+        'FUTURE_TIMESTAMP_HOLD','WIDE_WINDOW_HOLD','STALE_TIMESTAMP_HOLD','BOUNDED_OBSERVATION_NOT_GAP_FREE'};
+      for(final raw in observations){
+        if(raw is! Map)throw StateError('LAB_D_LONG_PTS_OBSERVATION_HOLD');
+        final v=raw['version'],f=raw['pcmFrame'],s=raw['state'];
+        final m=raw['monoWindowNs'],el=raw['elapsedWindowNs'];
+        final lo=raw['lagLowerNs'],hi=raw['lagUpperNs'];
+        if(!{1,2}.contains(v)||f is! int||f<0||f>144000000||
+           !observationStates.contains(s)||(v==1&&(m!=null||el!=null||lo!=null||hi!=null))||
+           (v==2&&(m is! int||m<0||el is! int||el<0))||
+           (lo==null)!=(hi==null)||(lo!=null&&(lo is! int||hi is! int||lo>hi))){
+          throw StateError('LAB_D_LONG_PTS_OBSERVATION_HOLD');
+        }
+        observationLines.add('Receipt v$v；PCM $f；同時基取樣窗 ${m??"未知"} ns；'
+          'elapsed 取樣窗 ${el??"未知"} ns；硬體時間戳落後範圍 ${lo??"未知"}～${hi??"未知"} ns；$s');
+      }
       final evidence=<String>[];
       int? previous;
       const states={'UNKNOWN','RESET_OR_STALL','POSSIBLE_GAP','POSSIBLE_OVERLAP',
@@ -167,6 +188,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         final n=raw['hardwareDelta'],r=raw['hardwareMinusPcm'];
         final h=raw['hardwareElapsedNs'],e=raw['hardwareClockMinusFramesNs'];
         final observed=raw['observedElapsedNs'],state=raw['state'];
+        final clockState=raw['clockObservationState'];
         final c60=raw['crosses60'],c120=raw['crosses120'];
         if(a is! int||b is! int||a<0||b<=a||b>144000000||d!=b-a||
            (previous!=null&&a!=previous)||observed is! int||observed<=0||
@@ -175,25 +197,31 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
            (n==null)!=(h==null)||(n==null)!=(r==null)||
            (n is int&&r!=n-(b-a))||
            c60!=(a<57600000&&b>=57600000)||
-           c120!=(a<115200000&&b>=115200000)||!states.contains(state)){
+           c120!=(a<115200000&&b>=115200000)||!states.contains(state)||
+           !{'LEGACY_TIMEBASE_NOT_VERIFIED','CLOCK_SEQUENCE_HOLD','POSSIBLE_SUSPEND_HOLD',
+              'CLOCK_DISCONTINUITY_HOLD','OBSERVATION_NOT_VERIFIED','BOUNDED_INTERVAL_NOT_GAP_FREE'}.contains(clockState)){
           throw StateError('LAB_D_LONG_PTS_CROSSWALK_HOLD');
         }
         previous=b;
         evidence.add('PCM $a–$b；硬體差值 ${r??"未知"} frames；'
           '硬體時計誤差 ${e??"未知"} ns；觀測間隔 $observed ns；'
-          '${c60==true?"跨60min ":""}${c120==true?"跨120min ":""}$state');
+          '${c60==true?"跨60min ":""}${c120==true?"跨120min ":""}$state；同時基區間 $clockState');
       }
       widget.debug.record('LAB_D_LONG_READBACK_OK',{
         'parts':lines.length,'frames':last,'tail_bytes_uncommitted':tail,
-        'pts_state':pts,'pts_count':count,'cross_hour_hardware_observed':cross
+        'pts_state':pts,'pts_count':count,'cross_hour_hardware_observed':cross,
+        'pts_receipt_version':observations.isEmpty?0:observations.first['version'],
+        'pts_provenance':provenance
       });
       if(mounted)setState((){_verifiedSession=session;_verifiedShas.addAll(hashes);_report=
         '最新真實錄音磁碟 Session $session；'
-        '跨程序來源身分：NOT_VERIFIED。'
+        '跨程序來源身分：NOT_VERIFIED。錄音來源本機綁定：$provenance。'
         '狀態 $status；提交 '+lines.length.toString()+' 段；'
         '未提交 $tail B；硬體 PTS $pts；取樣 $count 次；'
         '60 分鐘兩側硬體取樣：'+(cross?'已觀察':'未證實')+'。'
         +lines.join('；')
+        +'。PTS 同時基取樣證據：'
+        +(observationLines.isEmpty?'NOT_VERIFIED':observationLines.join('\n'))
         +'。PTS 區間證據（取樣有限，非無掉幀證明）：'
         + (evidence.isEmpty?'NOT_VERIFIED':evidence.join('\n'))
         +'。硬體時計與 elapsedRealtime 觀測間隔分開呈現。'

@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v41.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v42.groq_stt_lab
 
 import android.Manifest
 import android.media.MediaPlayer

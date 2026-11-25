@@ -59,6 +59,21 @@ class DLongContracts(unittest.TestCase):
         main=(LAB/"lib/main.dart").read_text(encoding="utf8")
         self.assertIn("${LabBuildInfo.versionName}+${LabBuildInfo.versionCode}", main)
         self.assertNotIn("'version': '0.4.34+39'", main)
+    def test_versioned_monotonic_observation_not_cross_clock_gap_free(self):
+        for token in ("val beforeElapsed=SystemClock.elapsedRealtimeNanos()",
+                      "val beforeMono=System.nanoTime()", "val afterMono=System.nanoTime()",
+                      "val afterElapsed=SystemClock.elapsedRealtimeNanos()",
+                      "LabDLongPts.Observation(id.toString(),recorderLifetime",
+                      "ptsObservations", "ptsProvenance", "if(index==1)5000000000L"):
+            self.assertIn(token,CAPTURE)
+        for token in ("LEGACY_TIMEBASE_NOT_VERIFIED","FUTURE_TIMESTAMP_HOLD","WIDE_WINDOW_HOLD",
+                      "POSSIBLE_SUSPEND_HOLD","CLOCK_DISCONTINUITY_HOLD",
+                      "LOCAL_SESSION_RECORDER_BOUND_NOT_ATTESTED","LAB_D_LONG_PTS_PROVENANCE_HOLD",
+                      'tokens[0]=="v2"','tokens[0]=="v1"'):
+            self.assertIn(token,PTS)
+        self.assertNotIn("s.hardwareNs!!<=s.observedMonoNs",PTS)
+        self.assertIn("PTS 同時基取樣證據",UI)
+        self.assertIn("跨程序來源身分：NOT_VERIFIED",UI)
     def test_sealed_wav_preview_is_local_and_requires_verified_receipt(self):
         proof=(LAB/"native/LabMultiPartProof.kt").read_text()
         for token in ("fun verifyRaw", "fun verifiedWav", "recoverSnapshot().receipts",

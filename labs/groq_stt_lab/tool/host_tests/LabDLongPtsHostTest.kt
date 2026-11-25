@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v41.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v42.groq_stt_lab
 import java.io.File
 import java.nio.file.Files
 object LabDLongPtsHostTest {
@@ -59,6 +59,47 @@ object LabDLongPtsHostTest {
       File(d,"longpts_000002.receipt").writeText("tampered")
       rejects{LabDLongPts.read(d)}
     }finally{d.listFiles()?.forEach{it.delete()};d.delete()}
+    val session=java.util.UUID.randomUUID().toString()
+    val lifetime=java.util.UUID.randomUUID().toString()
+    fun observed(s:LabDLongPts.Sample,shift:Long=0L):LabDLongPts.Sample {
+      val h=requireNotNull(s.hardwareNs)
+      val before=h+1000000L
+      return s.copy(observedMonoNs=before+shift,
+        observation=LabDLongPts.Observation(session,lifetime,before,before+1000000L,
+          before+shift,before+shift+1200000L))
+    }
+    val a=observed(s1);val b=observed(s2)
+    check(LabDLongPts.observations(listOf(a)).single()["state"]=="BOUNDED_OBSERVATION_NOT_GAP_FREE")
+    check(LabDLongPts.observations(listOf(a)).single()["lagUpperNs"]==2000000L)
+    check(LabDLongPts.observations(listOf(s1)).single()["state"]=="LEGACY_TIMEBASE_NOT_VERIFIED")
+    check(LabDLongPts.crosswalk(listOf(a,b)).single()["clockObservationState"]=="BOUNDED_INTERVAL_NOT_GAP_FREE")
+    check(LabDLongPts.provenance(listOf(a,b))=="LOCAL_SESSION_RECORDER_BOUND_NOT_ATTESTED")
+    check(LabDLongPts.inspect(listOf(a,b))=="HARDWARE_PTS_OBSERVED_NOT_GAP_FREE")
+    val suspend=observed(s2,90000000000L)
+    check(LabDLongPts.crosswalk(listOf(a,suspend)).single()["clockObservationState"]=="POSSIBLE_SUSPEND_HOLD")
+    check(LabDLongPts.inspect(listOf(a,suspend))=="LAB_D_LONG_PTS_TIMEBASE_HOLD")
+    val future=a.copy(hardwareNs=a.observation!!.afterMonoNs+1)
+    check(LabDLongPts.observations(listOf(future)).single()["state"]=="FUTURE_TIMESTAMP_HOLD")
+    val wide=a.copy(observation=a.observation!!.copy(afterMonoNs=a.observation!!.beforeMonoNs+50000001L))
+    check(LabDLongPts.observations(listOf(wide)).single()["state"]=="WIDE_WINDOW_HOLD")
+    val missing=a.copy(hardwareNs=null,hardwareFrames=null)
+    check(LabDLongPts.observations(listOf(missing)).single()["state"]=="HARDWARE_UNAVAILABLE_NOT_VERIFIED")
+    val stale=a.copy(hardwareNs=a.observation!!.afterMonoNs-2000000001L)
+    check(LabDLongPts.observations(listOf(stale)).single()["state"]=="STALE_TIMESTAMP_HOLD")
+    rejects{LabDLongPts.inspect(listOf(s1,b))}
+    rejects{LabDLongPts.inspect(listOf(a,b.copy(observation=b.observation!!.copy(recorder=java.util.UUID.randomUUID().toString()))))}
+    val parent=Files.createTempDirectory("lab-v2-pts").toFile()
+    val folder=File(parent,session);check(folder.mkdir())
+    try {
+      LabDLongPts.publish(folder,1,a);LabDLongPts.publish(folder,2,b)
+      check(LabDLongPts.read(folder)==listOf(a,b))
+      val original=File(folder,"longpts_000001.receipt").readBytes()
+      rejects{LabDLongPts.publish(folder,1,a)}
+      check(File(folder,"longpts_000001.receipt").readBytes().contentEquals(original))
+      File(folder,"longpts_000002.receipt").writeText("v3\tinvalid\n")
+      rejects{LabDLongPts.read(folder)}
+    }finally{parent.deleteRecursively()}
+    println("LAB_D_LONG_HARDWARE_PTS_V2_HOST_PASS")
     println("LAB_D_LONG_HARDWARE_PTS_HOST_PASS")
   }
 }

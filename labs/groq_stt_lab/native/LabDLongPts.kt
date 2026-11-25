@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v41.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v42.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -9,14 +9,70 @@ import java.nio.file.StandardOpenOption
 
 /** True Android AudioRecord hardware frame/time observations, independent of PCM ordinal. */
 internal object LabDLongPts {
-    data class Sample(val capturedFrames:Long,val hardwareFrames:Long?,val hardwareNs:Long?,val observedMonoNs:Long)
+    // v1 observedMonoNs is historically elapsedRealtimeNanos, NOT CLOCK_MONOTONIC.
+    data class Observation(val session:String,val recorder:String,val beforeMonoNs:Long,
+        val afterMonoNs:Long,val beforeElapsedNs:Long,val afterElapsedNs:Long)
+    data class Sample(val capturedFrames:Long,val hardwareFrames:Long?,val hardwareNs:Long?,
+        val observedMonoNs:Long,val observation:Observation?=null)
+    private const val WINDOW_LIMIT_NS=50000000L // diagnostic 50ms, not calibration
+    private const val LAG_LIMIT_NS=2000000000L // diagnostic 2s, not a loss bound
+    private val idPattern=Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+    private fun observationState(s:Sample):String {
+        val o=s.observation?:return "LEGACY_TIMEBASE_NOT_VERIFIED"
+        val h=s.hardwareNs?:return "HARDWARE_UNAVAILABLE_NOT_VERIFIED"
+        return when {
+            h>o.afterMonoNs -> "FUTURE_TIMESTAMP_HOLD"
+            o.afterMonoNs-o.beforeMonoNs>WINDOW_LIMIT_NS ||
+                o.afterElapsedNs-o.beforeElapsedNs>WINDOW_LIMIT_NS -> "WIDE_WINDOW_HOLD"
+            o.afterMonoNs-h>LAG_LIMIT_NS -> "STALE_TIMESTAMP_HOLD"
+            else -> "BOUNDED_OBSERVATION_NOT_GAP_FREE"
+        }
+    }
+    // Compare deltas between brackets, not absolute unlike-clock timestamps.
+    // Positive elapsed-minus-monotonic excess may indicate suspend; it cannot prove loss.
+    private fun intervalClock(a:Sample,b:Sample):String {
+        val x=a.observation?:return "LEGACY_TIMEBASE_NOT_VERIFIED"
+        val y=b.observation?:return "LEGACY_TIMEBASE_NOT_VERIFIED"
+        if(y.beforeMonoNs<x.afterMonoNs || y.beforeElapsedNs<x.afterElapsedNs)
+            return "CLOCK_SEQUENCE_HOLD"
+        val low=(y.beforeElapsedNs-x.afterElapsedNs)-(y.afterMonoNs-x.beforeMonoNs)
+        val high=(y.afterElapsedNs-x.beforeElapsedNs)-(y.beforeMonoNs-x.afterMonoNs)
+        return when {
+            low>WINDOW_LIMIT_NS -> "POSSIBLE_SUSPEND_HOLD"
+            high< -WINDOW_LIMIT_NS -> "CLOCK_DISCONTINUITY_HOLD"
+            observationState(a)!="BOUNDED_OBSERVATION_NOT_GAP_FREE" ||
+                observationState(b)!="BOUNDED_OBSERVATION_NOT_GAP_FREE" -> "OBSERVATION_NOT_VERIFIED"
+            else -> "BOUNDED_INTERVAL_NOT_GAP_FREE"
+        }
+    }
+    fun observations(items:List<Sample>):List<Map<String,Any?>> {
+        inspect(items)
+        return items.map { s ->
+            val o=s.observation
+            mapOf("version" to if(o==null)1 else 2,
+                "pcmFrame" to s.capturedFrames,"state" to observationState(s),
+                "monoWindowNs" to o?.let{it.afterMonoNs-it.beforeMonoNs},
+                "elapsedWindowNs" to o?.let{it.afterElapsedNs-it.beforeElapsedNs},
+                "lagLowerNs" to o?.let{v->s.hardwareNs?.let{v.beforeMonoNs-it}},
+                "lagUpperNs" to o?.let{v->s.hardwareNs?.let{v.afterMonoNs-it}})
+        }
+    }
+    fun provenance(items:List<Sample>):String {
+        inspect(items)
+        return if(items.isNotEmpty() && items.all{it.observation!=null})
+            "LOCAL_SESSION_RECORDER_BOUND_NOT_ATTESTED" else "NOT_VERIFIED"
+    }
     private const val MAX_COUNT=48
     private const val MAX_FRAMES=144000000L
     private val rx=Regex("^longpts_[0-9]{6}[.]receipt$")
     private fun name(i:Int)="longpts_%06d.receipt".format(java.util.Locale.ROOT,i)
-    private fun encode(s:Sample):ByteArray =
-        "v1\t${s.capturedFrames}\t${s.hardwareFrames?:-1L}\t${s.hardwareNs?:-1L}\t${s.observedMonoNs}\n"
-          .toByteArray(Charsets.US_ASCII)
+    private fun encode(s:Sample):ByteArray {
+        val o=s.observation
+        val common="${s.capturedFrames}\t${s.hardwareFrames?:-1L}\t${s.hardwareNs?:-1L}\t${s.observedMonoNs}"
+        return (if(o==null)"v1\t$common\n" else
+            "v2\t$common\t${o.session}\t${o.recorder}\t${o.beforeMonoNs}\t${o.afterMonoNs}\t${o.beforeElapsedNs}\t${o.afterElapsedNs}\n")
+            .toByteArray(Charsets.US_ASCII)
+    }
     fun inspect(items:List<Sample>):String {
         if(items.isEmpty())return "NOT_VERIFIED"
         check(items.size<=MAX_COUNT){"LAB_D_LONG_PTS_LIMIT_HOLD"}
@@ -26,11 +82,24 @@ internal object LabDLongPts {
               s.observedMonoNs>0 && (s.hardwareFrames==null)==(s.hardwareNs==null) &&
               (s.hardwareFrames==null ||
                (s.hardwareFrames in 0..10000000000L &&
-                s.hardwareNs!!>0 && s.hardwareNs!!<=s.observedMonoNs+5000000000L))) {
+                s.hardwareNs!!>0))) {
                 "LAB_D_LONG_PTS_EVIDENCE_HOLD"
             }
-            if(prev!=null)check(s.capturedFrames>prev.capturedFrames &&
-                s.observedMonoNs>prev.observedMonoNs){"LAB_D_LONG_PTS_SEQUENCE_HOLD"}
+            val o=s.observation
+            if(o!=null)check(idPattern.matches(o.session)&&idPattern.matches(o.recorder)&&
+                o.beforeMonoNs>0&&o.afterMonoNs>=o.beforeMonoNs&&
+                o.beforeElapsedNs==s.observedMonoNs&&o.afterElapsedNs>=o.beforeElapsedNs) {
+                "LAB_D_LONG_PTS_OBSERVATION_HOLD"
+            }
+            if(prev!=null) {
+                check(s.capturedFrames>prev.capturedFrames &&
+                    s.observedMonoNs>prev.observedMonoNs){"LAB_D_LONG_PTS_SEQUENCE_HOLD"}
+                val prior=prev.observation
+                check((prior==null)==(o==null) &&
+                    (prior==null || (prior.session==o?.session && prior.recorder==o?.recorder))) {
+                    "LAB_D_LONG_PTS_PROVENANCE_HOLD"
+                }
+            }
             prev=s
         }
         if(items.size<2 || items.any{it.hardwareFrames==null})return "NOT_VERIFIED"
@@ -43,6 +112,10 @@ internal object LabDLongPts {
             if(kotlin.math.abs(physical-native)>32000L)
                 return "LAB_D_LONG_PTS_UNALIGNED_HOLD"
         }
+        if(items.first().observation!=null &&
+            (items.any{observationState(it)!="BOUNDED_OBSERVATION_NOT_GAP_FREE"} ||
+            items.zipWithNext().any{intervalClock(it.first,it.second)!="BOUNDED_INTERVAL_NOT_GAP_FREE"}))
+            return "LAB_D_LONG_PTS_TIMEBASE_HOLD"
         return "HARDWARE_PTS_OBSERVED_NOT_GAP_FREE"
     }
     /**
@@ -81,6 +154,7 @@ internal object LabDLongPts {
                 "hardwareElapsedNs" to hardwareNs,
                 "hardwareClockMinusFramesNs" to clockResidual,
                 "observedElapsedNs" to (b.observedMonoNs-a.observedMonoNs),
+                "clockObservationState" to intervalClock(a,b),
                 "crosses60" to (a.capturedFrames<57600000L && b.capturedFrames>=57600000L),
                 "crosses120" to (a.capturedFrames<115200000L && b.capturedFrames>=115200000L),
                 "state" to state
@@ -90,6 +164,9 @@ internal object LabDLongPts {
     fun publish(folder:File,index:Int,s:Sample) {
         check(index in 1..MAX_COUNT){"LAB_D_LONG_PTS_LIMIT_HOLD"}
         inspect(listOf(s))
+        if(s.observation!=null)check(s.observation.session==folder.name){
+            "LAB_D_LONG_PTS_PROVENANCE_HOLD"
+        }
         val target=File(folder,name(index))
         val bytes=encode(s)
         check(!Files.exists(target.toPath(),LinkOption.NOFOLLOW_LINKS)){"LAB_D_LONG_PTS_EXISTS_HOLD"}
@@ -111,13 +188,17 @@ internal object LabDLongPts {
         check(files.size<=MAX_COUNT){"LAB_D_LONG_PTS_LIMIT_HOLD"}
         return files.mapIndexed {i,f->
             check(f.name==name(i+1) && Files.isRegularFile(f.toPath(),LinkOption.NOFOLLOW_LINKS)
-              && f.length() in 13L..120L){"LAB_D_LONG_PTS_READBACK_HOLD"}
+              && f.length() in 13L..512L){"LAB_D_LONG_PTS_READBACK_HOLD"}
             val str=f.readText(Charsets.US_ASCII)
             check(str.endsWith("\n")){"LAB_D_LONG_PTS_READBACK_HOLD"}
             val tokens=str.trimEnd('\n').split('\t')
-            check(tokens.size==5 && tokens[0]=="v1"){"LAB_D_LONG_PTS_READBACK_HOLD"}
-            val v=tokens.drop(1).map {it.toLongOrNull()?:error("LAB_D_LONG_PTS_READBACK_HOLD")}
-            val sample=Sample(v[0],v[1].takeIf{it>=0},v[2].takeIf{it>=0},v[3])
+            check((tokens.size==5 && tokens[0]=="v1") ||
+                (tokens.size==11 && tokens[0]=="v2")){"LAB_D_LONG_PTS_READBACK_HOLD"}
+            fun number(i:Int)=tokens[i].toLongOrNull()?:error("LAB_D_LONG_PTS_READBACK_HOLD")
+            val o=if(tokens[0]=="v2")Observation(tokens[5],tokens[6],number(7),
+                number(8),number(9),number(10)) else null
+            if(o!=null)check(o.session==folder.name){"LAB_D_LONG_PTS_PROVENANCE_HOLD"}
+            val sample=Sample(number(1),number(2).takeIf{it>=0},number(3).takeIf{it>=0},number(4),o)
             check(encode(sample).contentEquals(str.toByteArray(Charsets.US_ASCII))){"LAB_D_LONG_PTS_READBACK_HOLD"}
             sample
         }.also{inspect(it)}
