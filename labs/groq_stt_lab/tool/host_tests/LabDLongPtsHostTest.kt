@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v42.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v43.groq_stt_lab
 import java.io.File
 import java.nio.file.Files
 object LabDLongPtsHostTest {
@@ -99,6 +99,41 @@ object LabDLongPtsHostTest {
       File(folder,"longpts_000002.receipt").writeText("v3\tinvalid\n")
       rejects{LabDLongPts.read(folder)}
     }finally{parent.deleteRecursively()}
+    // Synthetic host fixtures only; not Android or continuous acoustic proof.
+    val shortA=observed(LabDLongPts.Sample(100L,100L,ns,ns))
+    val shortB=observed(LabDLongPts.Sample(80100L,80100L,ns+5000250000L,ns+5000250000L))
+    val short=LabDLongPts.coverage(listOf(shortA,shortB),listOf(640000L),true)
+    check(short["boundedFrames"]==80000L && short["unknownFrames"]==560000L)
+    check(short["continuity"]=="NOT_VERIFIED")
+    val shortPart=(short["parts"] as List<*>).single() as Map<*,*>
+    val shortSegments=shortPart["segments"] as List<*>
+    check(shortSegments.size==3)
+    check((shortSegments.first() as Map<*,*>)["state"]=="UNOBSERVED_NOT_VERIFIED")
+    check((shortSegments.last() as Map<*,*>)["end"]==640000L)
+    check((short["boundaries"] as List<*>).isEmpty())
+    val crossA=observed(LabDLongPts.Sample(57590000L,57590000L,ns,ns))
+    val crossB=observed(LabDLongPts.Sample(57610000L,57610000L,ns+1250000000L,ns+1250000000L))
+    val cross=LabDLongPts.coverage(listOf(crossA,crossB),listOf(57600000L,57620000L),true)
+    check(cross["boundedFrames"]==20000L)
+    val boundary=(cross["boundaries"] as List<*>).single() as Map<*,*>
+    check(boundary["frame"]==57600000L && boundary["state"]=="BOUNDED_PAIR_NOT_GAP_FREE")
+    val exact=observed(LabDLongPts.Sample(57600000L,57600000L,ns+625000000L,ns+625000000L))
+    val atBoundary=LabDLongPts.coverage(listOf(crossA,exact,crossB),listOf(57600000L,57620000L),true)
+    check(((atBoundary["boundaries"] as List<*>).single() as Map<*,*>)["state"]=="BOUNDARY_SAMPLE_ONLY_NOT_VERIFIED")
+    val tail=LabDLongPts.coverage(listOf(crossA,crossB),listOf(57600000L),false)
+    check(tail["boundedFrames"]==0L && tail["unknownFrames"]==57600000L && tail["outsideCommittedSamples"]==1)
+    check((tail["boundaries"] as List<*>).isEmpty())
+    rejects{LabDLongPts.coverage(listOf(crossA,crossB),listOf(57600000L),true)}
+    val noSamples=LabDLongPts.coverage(emptyList(),listOf(10L,20L),true)
+    check(noSamples["unknownFrames"]==20L && noSamples["boundedFrames"]==0L)
+    check(((noSamples["boundaries"] as List<*>).single() as Map<*,*>)["state"]=="BOUNDARY_UNOBSERVED_NOT_VERIFIED")
+    check(LabDLongPts.coverage(listOf(s1,s2),listOf(57600000L),true)["boundedFrames"]==0L)
+    check(LabDLongPts.coverage(listOf(a,suspend),listOf(57600000L),true)["boundedFrames"]==0L)
+    check(LabDLongPts.coverage(listOf(shortA),listOf(640000L),true)["unknownFrames"]==640000L)
+    check(LabDLongPts.coverage(listOf(shortA,shortB),emptyList(),false)["outsideCommittedSamples"]==2)
+    rejects{LabDLongPts.coverage(emptyList(),listOf(10L,10L),true)}
+    rejects{LabDLongPts.coverage(emptyList(),listOf(57600001L),true)}
+    println("LAB_D_LONG_COMMITTED_PTS_COVERAGE_HOST_PASS")
     println("LAB_D_LONG_HARDWARE_PTS_V2_HOST_PASS")
     println("LAB_D_LONG_HARDWARE_PTS_HOST_PASS")
   }

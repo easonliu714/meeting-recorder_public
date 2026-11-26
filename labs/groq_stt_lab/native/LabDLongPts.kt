@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v42.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v43.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -161,6 +161,82 @@ internal object LabDLongPts {
             )
         }
     }
+    /**
+     * Partition only the verified committed PCM extent. Adjacent receipt pairs
+     * are endpoint observations, NOT continuous hardware or acoustic coverage.
+     * A pair extending into an uncommitted tail cannot support committed coverage.
+     * Never interpolate hardware positions at a Part boundary.
+     */
+    fun coverage(items:List<Sample>,partEnds:List<Long>,finished:Boolean):Map<String,Any> {
+        val intervals=crosswalk(items)
+        check(partEnds.size<=3 && (!finished||partEnds.isNotEmpty()) &&
+            partEnds.zipWithNext().all{it.second>it.first} &&
+            partEnds.all{it in 1..MAX_FRAMES}){"LAB_D_LONG_PTS_COVERAGE_HOLD"}
+        val committedEnd=partEnds.lastOrNull()?:0L
+        val outside=items.count{it.capturedFrames>committedEnd}
+        check(!finished||outside==0){"LAB_D_LONG_PTS_EXTENT_HOLD"}
+        fun pairState(p:Map<String,Any?>):String {
+            val end=p["pcmEnd"] as Long
+            return when {
+                end>committedEnd -> "PAIR_OUTSIDE_COMMITTED_NOT_VERIFIED"
+                p["state"]=="WITHIN_DIAGNOSTIC_BOUND_NOT_GAP_FREE" &&
+                    p["clockObservationState"]=="BOUNDED_INTERVAL_NOT_GAP_FREE" ->
+                    "BOUNDED_PAIR_NOT_GAP_FREE"
+                p["state"]=="UNKNOWN" ||
+                    p["clockObservationState"]=="LEGACY_TIMEBASE_NOT_VERIFIED" ||
+                    p["clockObservationState"]=="OBSERVATION_NOT_VERIFIED" ->
+                    "PAIR_NOT_VERIFIED"
+                else -> "PAIR_DIAGNOSTIC_HOLD"
+            }
+        }
+        var start=0L
+        var totalBounded=0L
+        val parts=partEnds.mapIndexed { i,end ->
+            check(end-start in 1..57600000L){"LAB_D_LONG_PTS_COVERAGE_HOLD"}
+            var cursor=start
+            var bounded=0L
+            val segments=mutableListOf<Map<String,Any>>()
+            fun segment(a:Long,b:Long,state:String) {
+                if(b<=a)return
+                check(a==cursor && b<=end){"LAB_D_LONG_PTS_COVERAGE_HOLD"}
+                segments.add(mapOf("start" to a,"end" to b,"state" to state))
+                if(state=="BOUNDED_PAIR_NOT_GAP_FREE")bounded+=b-a
+                cursor=b
+            }
+            for(p in intervals) {
+                val a=maxOf(start,p["pcmStart"] as Long)
+                val b=minOf(end,p["pcmEnd"] as Long)
+                if(a>=b)continue
+                if(cursor<a)segment(cursor,a,"UNOBSERVED_NOT_VERIFIED")
+                segment(a,b,pairState(p))
+            }
+            if(cursor<end)segment(cursor,end,"UNOBSERVED_NOT_VERIFIED")
+            check(cursor==end){"LAB_D_LONG_PTS_COVERAGE_HOLD"}
+            val result=mapOf("index" to i+1,"start" to start,"end" to end,
+                "boundedFrames" to bounded,"unknownFrames" to end-start-bounded,
+                "segments" to segments)
+            totalBounded+=bounded
+            start=end
+            result
+        }
+        // Only actual internal committed boundaries, not nominal 60/120min
+        // milestones or the final end of the last committed Part.
+        val boundaries=partEnds.dropLast(1).map { frame ->
+            val p=intervals.firstOrNull{(it["pcmStart"] as Long)<frame &&
+                (it["pcmEnd"] as Long)>frame}
+            val state=if(p==null) {
+                if(items.any{it.capturedFrames==frame})"BOUNDARY_SAMPLE_ONLY_NOT_VERIFIED"
+                else "BOUNDARY_UNOBSERVED_NOT_VERIFIED"
+            } else pairState(p)
+            mapOf("frame" to frame,"state" to state,
+                "pairStart" to p?.get("pcmStart"),"pairEnd" to p?.get("pcmEnd"))
+        }
+        return mapOf("committedFrames" to committedEnd,
+            "boundedFrames" to totalBounded,"unknownFrames" to committedEnd-totalBounded,
+            "outsideCommittedSamples" to outside,"parts" to parts,"boundaries" to boundaries,
+            "continuity" to "NOT_VERIFIED")
+    }
+
     fun publish(folder:File,index:Int,s:Sample) {
         check(index in 1..MAX_COUNT){"LAB_D_LONG_PTS_LIMIT_HOLD"}
         inspect(listOf(s))

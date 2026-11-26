@@ -74,6 +74,16 @@ class DLongContracts(unittest.TestCase):
         self.assertNotIn("s.hardwareNs!!<=s.observedMonoNs",PTS)
         self.assertIn("PTS 同時基取樣證據",UI)
         self.assertIn("跨程序來源身分：NOT_VERIFIED",UI)
+    def test_committed_pts_coverage_never_extrapolates(self):
+        for token in ("fun coverage", "PAIR_OUTSIDE_COMMITTED_NOT_VERIFIED",
+                      "UNOBSERVED_NOT_VERIFIED", "BOUNDARY_SAMPLE_ONLY_NOT_VERIFIED",
+                      "partEnds.dropLast(1)", "LAB_D_LONG_PTS_EXTENT_HOLD",
+                      '"continuity" to "NOT_VERIFIED"'):
+            self.assertIn(token,PTS)
+        self.assertIn("LabDLongPts.coverage(pts,parts.map{it.end}",CAPTURE)
+        self.assertIn("已提交 PCM 證據覆蓋",UI)
+        self.assertIn("實體已提交 Part 邊界",UI)
+        self.assertIn("pts_unknown_frames",UI)
     def test_sealed_wav_preview_is_local_and_requires_verified_receipt(self):
         proof=(LAB/"native/LabMultiPartProof.kt").read_text()
         for token in ("fun verifyRaw", "fun verifiedWav", "recoverSnapshot().receipts",

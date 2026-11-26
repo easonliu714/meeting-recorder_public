@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v42.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v43.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -80,6 +80,7 @@ internal object LabDLongCapture {
             "ptsCount" to pts.size,
             "ptsStatus" to status,
             "ptsIntervals" to LabDLongPts.crosswalk(pts),
+            "ptsCoverage" to LabDLongPts.coverage(pts,parts.map{it.end},proof?.finished==true),
             "ptsObservations" to LabDLongPts.observations(pts),
             "ptsProvenance" to LabDLongPts.provenance(pts),
             "crossHourHardwareObserved" to cross,

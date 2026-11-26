@@ -128,12 +128,13 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
       final pts=p?['ptsStatus'],count=p?['ptsCount'],session=p?['session'];
       final cross=p?['crossHourHardwareObserved'];
       final intervals=p?['ptsIntervals'];
+      final coverage=p?['ptsCoverage'];
       final observations=p?['ptsObservations'],provenance=p?['ptsProvenance'];
       if(p?['unaccelerated']!=true||parts is! List||parts.length>3||
          tail is! int||tail<0||tail>115200000||
          status is! String||!{'completed','interrupted','uncommitted'}.contains(status)||
          pts is! String||count is! int||count<0||count>48||
-         cross is! bool||intervals is! List||
+         cross is! bool||intervals is! List||coverage is! Map||
          intervals.length!=(count>0?count-1:0)||observations is! List||
          observations.length!=count||
          !{'NOT_VERIFIED','LOCAL_SESSION_RECORDER_BOUND_NOT_ATTESTED'}.contains(provenance)||
@@ -207,11 +208,72 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
           '硬體時計誤差 ${e??"未知"} ns；觀測間隔 $observed ns；'
           '${c60==true?"跨60min ":""}${c120==true?"跨120min ":""}$state；同時基區間 $clockState');
       }
+      // Verify the native partition covers exactly the sealed ranges, without
+      // promoting unobserved or uncommitted PCM into hardware evidence.
+      final coverageParts=coverage['parts'],boundaries=coverage['boundaries'];
+      final bounded=coverage['boundedFrames'],unknown=coverage['unknownFrames'];
+      final outside=coverage['outsideCommittedSamples'];
+      if(coverage['continuity']!='NOT_VERIFIED'||coverage['committedFrames']!=last||
+         bounded is! int||unknown is! int||bounded<0||unknown<0||bounded+unknown!=last||
+         outside is! int||outside<0||outside>count||(status=='completed'&&outside!=0)||
+         coverageParts is! List||coverageParts.length!=parts.length||
+         boundaries is! List||boundaries.length!=(parts.isEmpty?0:parts.length-1)){
+        throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+      }
+      const coverageStates={'BOUNDED_PAIR_NOT_GAP_FREE','PAIR_NOT_VERIFIED',
+        'PAIR_DIAGNOSTIC_HOLD','PAIR_OUTSIDE_COMMITTED_NOT_VERIFIED','UNOBSERVED_NOT_VERIFIED'};
+      final coverageLines=<String>[];
+      var sum=0;
+      for(var i=0;i<coverageParts.length;i++){
+        final c=coverageParts[i],part=parts[i];
+        if(c is! Map||part is! Map||c['index']!=i+1||
+           c['start']!=part['start']||c['end']!=part['end']||c['segments'] is! List){
+          throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+        }
+        final start=c['start'],end=c['end'];
+        if(start is! int||end is! int)throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+        var cursor=start,partBounded=0;
+        final segments=c['segments'] as List;
+        if(segments.isEmpty||segments.length>50)throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+        for(final s in segments){
+          if(s is! Map)throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+          final a=s['start'],b=s['end'],state=s['state'];
+          if(a is! int||b is! int||a!=cursor||b<=a||b>end||!coverageStates.contains(state)){
+            throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+          }
+          if(state=='BOUNDED_PAIR_NOT_GAP_FREE')partBounded+=b-a;
+          coverageLines.add('Part ${i+1} PCM $a–$b；$state');
+          cursor=b;
+        }
+        if(cursor!=end||c['boundedFrames']!=partBounded||
+           c['unknownFrames']!=end-start-partBounded){
+          throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+        }
+        sum+=partBounded;
+      }
+      if(sum!=bounded)throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+      final boundaryLines=<String>[];
+      for(var i=0;i<boundaries.length;i++){
+        final b=boundaries[i];
+        if(b is! Map||b['frame']!=(parts[i] as Map)['end']){
+          throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+        }
+        final f=b['frame'],a=b['pairStart'],z=b['pairEnd'],s=b['state'];
+        if(f is! int||!{...coverageStates,'BOUNDARY_SAMPLE_ONLY_NOT_VERIFIED',
+           'BOUNDARY_UNOBSERVED_NOT_VERIFIED'}.contains(s)||(a==null)!=(z==null)||
+           (a!=null&&(a is! int||z is! int||a>=f||z<=f))){
+          throw StateError('LAB_D_LONG_PTS_COVERAGE_HOLD');
+        }
+        boundaryLines.add('已提交 Part ${i+1}/${i+2} 邊界 $f；$s；取樣端點 ${a??"未知"}–${z??"未知"}');
+      }
       widget.debug.record('LAB_D_LONG_READBACK_OK',{
         'parts':lines.length,'frames':last,'tail_bytes_uncommitted':tail,
         'pts_state':pts,'pts_count':count,'cross_hour_hardware_observed':cross,
         'pts_receipt_version':observations.isEmpty?0:observations.first['version'],
-        'pts_provenance':provenance
+        'pts_provenance':provenance,
+        'pts_bounded_pair_frames':bounded,'pts_unknown_frames':unknown,
+        'pts_outside_committed_samples':outside,'pts_committed_boundaries':boundaries.length,
+        'pts_continuity':'NOT_VERIFIED'
       });
       if(mounted)setState((){_verifiedSession=session;_verifiedShas.addAll(hashes);_report=
         '最新真實錄音磁碟 Session $session；'
@@ -224,6 +286,11 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         +(observationLines.isEmpty?'NOT_VERIFIED':observationLines.join('\n'))
         +'。PTS 區間證據（取樣有限，非無掉幀證明）：'
         + (evidence.isEmpty?'NOT_VERIFIED':evidence.join('\n'))
+        +'。已提交 PCM 證據覆蓋（非連續性證明）：有界端點區間 $bounded 樣本；'
+        '未驗證 $unknown 樣本；提交範圍外取樣 $outside 次；全程連續性 NOT_VERIFIED。'
+        +coverageLines.join('\n')
+        +'。實體已提交 Part 邊界：'
+        +(boundaryLines.isEmpty?'無內部邊界':boundaryLines.join('\n'))
         +'。硬體時計與 elapsedRealtime 觀測間隔分開呈現。'
         'PTS 單調與 Part 連續不證明聲學無掉幀。'
         '未提交資料不補零、重送、覆寫；不自動續錄。';});
