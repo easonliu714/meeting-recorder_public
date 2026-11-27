@@ -84,6 +84,18 @@ class DLongContracts(unittest.TestCase):
         self.assertIn("已提交 PCM 證據覆蓋",UI)
         self.assertIn("實體已提交 Part 邊界",UI)
         self.assertIn("pts_unknown_frames",UI)
+    def test_actual_boundary_and_normal_stop_query_schedule(self):
+        for token in ("fun shouldSample", "BOUNDARY_LEAD_FRAMES=16000L",
+                      "capturedFrames in physicalBoundaries", "count>=MAX_COUNT-1",
+                      "capturedFrames<=lastSampleFrames"):
+            self.assertIn(token, PTS)
+        for token in ("fun recordPts()", "LabDLongPts.shouldSample",
+                      "lastPtsFrame=total.toLong()/2", "terminal=true",
+                      "normal.set(normalStop)"):
+            self.assertIn(token, CAPTURE)
+        self.assertLess(CAPTURE.index("terminal=true"),CAPTURE.index("recorder.stop()"))
+        self.assertIn("封存末端 PTS",UI)
+        self.assertIn("pts_endpoint_state",UI)
     def test_sealed_wav_preview_is_local_and_requires_verified_receipt(self):
         proof=(LAB/"native/LabMultiPartProof.kt").read_text()
         for token in ("fun verifyRaw", "fun verifiedWav", "recoverSnapshot().receipts",

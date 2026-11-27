@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v43.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v44.groq_stt_lab
 import java.io.File
 import java.nio.file.Files
 object LabDLongPtsHostTest {
@@ -133,6 +133,29 @@ object LabDLongPtsHostTest {
     check(LabDLongPts.coverage(listOf(shortA,shortB),emptyList(),false)["outsideCommittedSamples"]==2)
     rejects{LabDLongPts.coverage(emptyList(),listOf(10L,10L),true)}
     rejects{LabDLongPts.coverage(emptyList(),listOf(57600001L),true)}
+    // Scheduler tests are synthetic: actual Android queries remain required.
+    fun due(frame:Long,last:Long,count:Int=2,terminal:Boolean=false,now:Long=1L)=
+      LabDLongPts.shouldSample(frame,last,now,10L,count,terminal)
+    check(due(318L,-1L,count=0,now=10L))
+    check(!due(20000L,318L))
+    check(due(20000L,318L,now=10L))
+    for(boundary in listOf(57600000L,115200000L)) {
+      check(!due(boundary-16001L,boundary-32000L))
+      check(due(boundary-16000L,boundary-32000L))
+      check(!due(boundary-1L,boundary-16000L))
+      check(!due(boundary,boundary-16000L,now=10L))
+      check(due(boundary+1L,boundary-16000L))
+      check(!due(boundary+2L,boundary+1L))
+      check(due(boundary,boundary-16000L,terminal=true))
+    }
+    check(due(560638L,80638L,terminal=true))
+    check(!due(560638L,560638L,terminal=true))
+    check(!due(0L,-1L,count=0,terminal=true))
+    check(!due(560638L,80638L,count=47,now=10L))
+    check(due(560638L,80638L,count=47,terminal=true))
+    check(!due(560638L,80638L,count=48,terminal=true))
+    rejects{due(10L,11L)}
+    println("LAB_D_LONG_PTS_BOUNDARY_TERMINAL_SCHEDULER_HOST_PASS")
     println("LAB_D_LONG_COMMITTED_PTS_COVERAGE_HOST_PASS")
     println("LAB_D_LONG_HARDWARE_PTS_V2_HOST_PASS")
     println("LAB_D_LONG_HARDWARE_PTS_HOST_PASS")

@@ -266,6 +266,12 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         }
         boundaryLines.add('已提交 Part ${i+1}/${i+2} 邊界 $f；$s；取樣端點 ${a??"未知"}–${z??"未知"}');
       }
+      // An endpoint receipt is diagnostic only, not continuous or gap-free proof.
+      final endpointState=status=='completed'&&last>0&&observations.isNotEmpty&&
+        observations.last['pcmFrame']==last
+        ?(observations.last['state']=='BOUNDED_OBSERVATION_NOT_GAP_FREE'
+          ?'ENDPOINT_BOUNDED_NOT_GAP_FREE':'ENDPOINT_OBSERVED_NOT_VERIFIED')
+        :'ENDPOINT_NOT_VERIFIED';
       widget.debug.record('LAB_D_LONG_READBACK_OK',{
         'parts':lines.length,'frames':last,'tail_bytes_uncommitted':tail,
         'pts_state':pts,'pts_count':count,'cross_hour_hardware_observed':cross,
@@ -273,6 +279,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         'pts_provenance':provenance,
         'pts_bounded_pair_frames':bounded,'pts_unknown_frames':unknown,
         'pts_outside_committed_samples':outside,'pts_committed_boundaries':boundaries.length,
+        'pts_endpoint_state':endpointState,
         'pts_continuity':'NOT_VERIFIED'
       });
       if(mounted)setState((){_verifiedSession=session;_verifiedShas.addAll(hashes);_report=
@@ -280,6 +287,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         '跨程序來源身分：NOT_VERIFIED。錄音來源本機綁定：$provenance。'
         '狀態 $status；提交 '+lines.length.toString()+' 段；'
         '未提交 $tail B；硬體 PTS $pts；取樣 $count 次；'
+        '封存末端 PTS：$endpointState。'
         '60 分鐘兩側硬體取樣：'+(cross?'已觀察':'未證實')+'。'
         +lines.join('；')
         +'。PTS 同時基取樣證據：'

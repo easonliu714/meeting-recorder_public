@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v43.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v44.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -64,6 +64,27 @@ internal object LabDLongPts {
     }
     private const val MAX_COUNT=48
     private const val MAX_FRAMES=144000000L
+    private val physicalBoundaries=listOf(57600000L,115200000L)
+    private const val BOUNDARY_LEAD_FRAMES=16000L // one second at configured 16 kHz
+
+    /** Schedule actual queries, never generate positions or claim a committed boundary. */
+    fun shouldSample(capturedFrames:Long,lastSampleFrames:Long,nowNs:Long,
+        nextPeriodicNs:Long,count:Int,terminal:Boolean=false):Boolean {
+        check(capturedFrames in 0..MAX_FRAMES && lastSampleFrames in -1L..capturedFrames &&
+            count in 0..MAX_COUNT){"LAB_D_LONG_PTS_SCHEDULE_HOLD"}
+        if(capturedFrames==0L || capturedFrames<=lastSampleFrames || count>=MAX_COUNT)return false
+        if(terminal)return true // reserve one slot for a normal-stop endpoint
+        if(count>=MAX_COUNT-1)return false
+        // A strict before/after pair can straddle a boundary; a sample exactly
+        // at a boundary cannot establish such a pair. Terminal samples are exempt.
+        if(capturedFrames in physicalBoundaries)return false
+        val nearBoundary=physicalBoundaries.any { boundary ->
+            (capturedFrames>=boundary-BOUNDARY_LEAD_FRAMES && capturedFrames<boundary &&
+                lastSampleFrames<boundary-BOUNDARY_LEAD_FRAMES) ||
+            (capturedFrames>boundary && lastSampleFrames<boundary)
+        }
+        return nowNs>=nextPeriodicNs || nearBoundary
+    }
     private val rx=Regex("^longpts_[0-9]{6}[.]receipt$")
     private fun name(i:Int)="longpts_%06d.receipt".format(java.util.Locale.ROOT,i)
     private fun encode(s:Sample):ByteArray {

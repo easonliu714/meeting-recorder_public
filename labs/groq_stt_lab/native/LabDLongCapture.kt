@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v43.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v44.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -175,6 +175,32 @@ internal object LabDLongCapture {
             var nextPtsNs=0L
             var index=0
             val recorderLifetime=UUID.randomUUID().toString()
+            var lastPtsFrame=-1L
+            fun recordPts() {
+                // Genuine Android timestamp or explicit unavailable sample;
+                // neither total/2 nor WAV Part ordinal is a hardware timestamp.
+                val timestamp=AudioTimestamp()
+                // Bracket the genuine hardware query on CLOCK_MONOTONIC, and
+                // independently bracket elapsedRealtime to detect possible suspend.
+                val beforeElapsed=SystemClock.elapsedRealtimeNanos()
+                val beforeMono=System.nanoTime()
+                val result=try {
+                    recorder.getTimestamp(timestamp,AudioTimestamp.TIMEBASE_MONOTONIC)
+                } catch(_:Exception){AudioRecord.ERROR_INVALID_OPERATION}
+                val afterMono=System.nanoTime()
+                val afterElapsed=SystemClock.elapsedRealtimeNanos()
+                val hf=if(result==AudioRecord.SUCCESS && timestamp.nanoTime>0 &&
+                    timestamp.framePosition>=0)timestamp.framePosition else null
+                val hn=if(hf==null)null else timestamp.nanoTime
+                LabDLongPts.publish(dir,++index,
+                    LabDLongPts.Sample(total.toLong()/2,hf,hn,beforeElapsed,
+                        LabDLongPts.Observation(id.toString(),recorderLifetime,
+                            beforeMono,afterMono,beforeElapsed,afterElapsed)))
+                // A second genuine observation at ~5s enables bounded short UAT.
+                // Subsequent samples retain the existing 5-minute cadence and cap.
+                lastPtsFrame=total.toLong()/2
+                nextPtsNs=afterElapsed+if(index==1)5000000000L else PTS_INTERVAL_NS
+            }
             while(total<MAX_BYTES && mode.get()==0) {
                 diskError.get()?.let{throw it}
                 check(SystemClock.elapsedRealtimeNanos()-start <
@@ -187,32 +213,19 @@ internal object LabDLongCapture {
                 total+=n
                 frames.set(total/2)
                 val now=SystemClock.elapsedRealtimeNanos()
-                if(now>=nextPtsNs && index<48) {
-                    // Genuine Android timestamp or explicit unavailable sample;
-                    // neither total/2 nor WAV Part ordinal is a hardware timestamp.
-                    val timestamp=AudioTimestamp()
-                    // Bracket the genuine hardware query on CLOCK_MONOTONIC, and
-                    // independently bracket elapsedRealtime to detect possible suspend.
-                    val beforeElapsed=SystemClock.elapsedRealtimeNanos()
-                    val beforeMono=System.nanoTime()
-                    val result=try {
-                        recorder.getTimestamp(timestamp,AudioTimestamp.TIMEBASE_MONOTONIC)
-                    } catch(_:Exception){AudioRecord.ERROR_INVALID_OPERATION}
-                    val afterMono=System.nanoTime()
-                    val afterElapsed=SystemClock.elapsedRealtimeNanos()
-                    val hf=if(result==AudioRecord.SUCCESS && timestamp.nanoTime>0 &&
-                        timestamp.framePosition>=0)timestamp.framePosition else null
-                    val hn=if(hf==null)null else timestamp.nanoTime
-                    LabDLongPts.publish(dir,++index,
-                        LabDLongPts.Sample(total.toLong()/2,hf,hn,beforeElapsed,
-                            LabDLongPts.Observation(id.toString(),recorderLifetime,
-                                beforeMono,afterMono,beforeElapsed,afterElapsed)))
-                    // A second genuine observation at ~5s enables bounded short UAT.
-                    // Subsequent samples retain the existing 5-minute cadence and cap.
-                    nextPtsNs=afterElapsed+if(index==1)5000000000L else PTS_INTERVAL_NS
+                if(LabDLongPts.shouldSample(total.toLong()/2,lastPtsFrame,now,nextPtsNs,index)) {
+                    recordPts()
                 }
             }
-            normal.set(mode.get()==2 || (total==MAX_BYTES && mode.get()==0))
+            val normalStop=mode.get()==2 || (total==MAX_BYTES && mode.get()==0)
+            // Query while the same recorder is still running, at the last accepted PCM extent.
+            // Never fabricate a hardware sample or repeat a captured frame on stop.
+            if(normalStop && LabDLongPts.shouldSample(total.toLong()/2,lastPtsFrame,
+                    SystemClock.elapsedRealtimeNanos(),nextPtsNs,index,terminal=true)) {
+                diskError.get()?.let{throw it}
+                recordPts()
+            }
+            normal.set(normalStop)
         } catch(e:Exception) { captureError=e;normal.set(false) }
         finally {
             try {
