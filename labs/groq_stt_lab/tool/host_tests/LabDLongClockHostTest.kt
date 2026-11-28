@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v44.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
 object LabDLongClockHostTest {
   @JvmStatic fun main(args:Array<String>) {
     val hour=LabDLongClock.HOUR_MS;val reminder=LabDLongClock.REMINDER_MS

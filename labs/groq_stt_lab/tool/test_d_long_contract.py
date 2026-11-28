@@ -96,6 +96,17 @@ class DLongContracts(unittest.TestCase):
         self.assertLess(CAPTURE.index("terminal=true"),CAPTURE.index("recorder.stop()"))
         self.assertIn("封存末端 PTS",UI)
         self.assertIn("pts_endpoint_state",UI)
+    def test_local_manifest_is_bound_and_read_only_on_recovery(self):
+        for token in ("fun beginManifest", "fun manifestState", "capture_session_v1.txt",
+                      "capture_manifest_v1.txt", "LOCAL_MANIFEST_MATCH_NOT_ATTESTED",
+                      "LOCAL_MANIFEST_MISSING_NOT_VERIFIED", "LOCAL_MANIFEST_UNSEALED_NOT_VERIFIED",
+                      "LAB_D_LONG_MANIFEST_MISMATCH_HOLD", "LAB_D_LONG_MANIFEST_BINDING_HOLD"):
+            self.assertIn(token,PTS)
+        self.assertLess(CAPTURE.index("LabDLongPts.beginManifest"),CAPTURE.index("recorder.startRecording()"))
+        self.assertIn("LabDLongPts.manifestState(dir,pts",CAPTURE)
+        self.assertIn("verifyOriginal=true,sealManifest=normal.get()",CAPTURE)
+        self.assertIn("本機封存證據清冊",UI)
+        self.assertIn("'manifest_state':manifest",UI)
     def test_sealed_wav_preview_is_local_and_requires_verified_receipt(self):
         proof=(LAB/"native/LabMultiPartProof.kt").read_text()
         for token in ("fun verifyRaw", "fun verifiedWav", "recoverSnapshot().receipts",

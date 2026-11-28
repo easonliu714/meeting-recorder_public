@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v44.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -43,7 +43,7 @@ internal object LabDLongCapture {
         check(dir.isDirectory && dir.absoluteFile==dir.canonicalFile){"LAB_D_LONG_FOLDER_HOLD"}
         return dir
     }
-    private fun snapshot(dir:File,id:UUID,verifyOriginal:Boolean=false):Map<String,Any> {
+    private fun snapshot(dir:File,id:UUID,verifyOriginal:Boolean=false,sealManifest:Boolean=false):Map<String,Any> {
         val items=dir.listFiles()?:error("LAB_D_LONG_READBACK_HOLD")
         val hasCommitted=items.any{it.name.endsWith(".commit")}
         val finished=Files.exists(File(dir,"finished_v1.txt").toPath(),LinkOption.NOFOLLOW_LINKS)
@@ -64,6 +64,9 @@ internal object LabDLongCapture {
         check(proof?.finished!=true || tail==0L){"LAB_D_LONG_SEAL_HOLD"}
         val pts=LabDLongPts.read(dir)
         val status=LabDLongPts.inspect(pts)
+        val manifest=LabDLongPts.manifestState(dir,pts,
+            parts.map{"${it.index}:${it.start}:${it.end}:${it.bytes}:${it.sha}"},
+            proof?.finished==true,sealManifest && proof?.finished==true)
         val cross=pts.any{it.capturedFrames<57600000L && it.hardwareFrames!=null} &&
             pts.any{it.capturedFrames>=57600000L && it.hardwareFrames!=null}
         return mapOf(
@@ -83,6 +86,7 @@ internal object LabDLongCapture {
             "ptsCoverage" to LabDLongPts.coverage(pts,parts.map{it.end},proof?.finished==true),
             "ptsObservations" to LabDLongPts.observations(pts),
             "ptsProvenance" to LabDLongPts.provenance(pts),
+            "manifestState" to manifest,
             "crossHourHardwareObserved" to cross,
             "hardwareFirst" to (pts.firstOrNull{it.hardwareFrames!=null}?.hardwareFrames?:-1L),
             "hardwareLast" to (pts.lastOrNull{it.hardwareFrames!=null}?.hardwareFrames?:-1L),
@@ -164,6 +168,8 @@ internal object LabDLongCapture {
         try {
             check(recorder.state==AudioRecord.STATE_INITIALIZED){"LAB_D_LONG_INIT_HOLD"}
             if(mode.get()!=0)return snapshot(dir,id)
+            val recorderLifetime=UUID.randomUUID().toString()
+            LabDLongPts.beginManifest(dir,recorderLifetime)
             recorder.startRecording()
             check(recorder.recordingState==AudioRecord.RECORDSTATE_RECORDING) {
                 "LAB_D_LONG_START_HOLD"
@@ -174,7 +180,6 @@ internal object LabDLongCapture {
             var total=0
             var nextPtsNs=0L
             var index=0
-            val recorderLifetime=UUID.randomUUID().toString()
             var lastPtsFrame=-1L
             fun recordPts() {
                 // Genuine Android timestamp or explicit unavailable sample;
@@ -248,6 +253,8 @@ internal object LabDLongCapture {
         }
         diskError.get()?.let{throw it}
         captureError?.let{throw it}
-        return snapshot(dir,id)
+        // The disk worker has joined. Seal only a verified, completed prefix;
+        // a failed publication never promotes the tail or rewrites originals.
+        return snapshot(dir,id,verifyOriginal=true,sealManifest=normal.get())
     }
 }

@@ -130,6 +130,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
       final intervals=p?['ptsIntervals'];
       final coverage=p?['ptsCoverage'];
       final observations=p?['ptsObservations'],provenance=p?['ptsProvenance'];
+      final manifest=p?['manifestState'];
       if(p?['unaccelerated']!=true||parts is! List||parts.length>3||
          tail is! int||tail<0||tail>115200000||
          status is! String||!{'completed','interrupted','uncommitted'}.contains(status)||
@@ -138,6 +139,9 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
          intervals.length!=(count>0?count-1:0)||observations is! List||
          observations.length!=count||
          !{'NOT_VERIFIED','LOCAL_SESSION_RECORDER_BOUND_NOT_ATTESTED'}.contains(provenance)||
+         !{'LOCAL_MANIFEST_ABSENT_NOT_VERIFIED','LOCAL_MANIFEST_UNSEALED_NOT_VERIFIED',
+           'LOCAL_MANIFEST_MISSING_NOT_VERIFIED','LOCAL_MANIFEST_MATCH_NOT_ATTESTED'}.contains(manifest)||
+         (status!='completed'&&manifest=='LOCAL_MANIFEST_MATCH_NOT_ATTESTED')||
          session is! String||
          !RegExp(r'^[0-9a-f-]{36}$').hasMatch(session)) {
         throw StateError('LAB_D_LONG_READBACK_HOLD');
@@ -280,6 +284,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         'pts_bounded_pair_frames':bounded,'pts_unknown_frames':unknown,
         'pts_outside_committed_samples':outside,'pts_committed_boundaries':boundaries.length,
         'pts_endpoint_state':endpointState,
+        'manifest_state':manifest,
         'pts_continuity':'NOT_VERIFIED'
       });
       if(mounted)setState((){_verifiedSession=session;_verifiedShas.addAll(hashes);_report=
@@ -288,6 +293,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         '狀態 $status；提交 '+lines.length.toString()+' 段；'
         '未提交 $tail B；硬體 PTS $pts；取樣 $count 次；'
         '封存末端 PTS：$endpointState。'
+        '本機封存證據清冊：$manifest。非跨程序來源認證。'
         '60 分鐘兩側硬體取樣：'+(cross?'已觀察':'未證實')+'。'
         +lines.join('；')
         +'。PTS 同時基取樣證據：'

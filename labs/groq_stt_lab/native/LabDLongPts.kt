@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v44.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -256,6 +256,88 @@ internal object LabDLongPts {
             "boundedFrames" to totalBounded,"unknownFrames" to committedEnd-totalBounded,
             "outsideCommittedSamples" to outside,"parts" to parts,"boundaries" to boundaries,
             "continuity" to "NOT_VERIFIED")
+    }
+
+    // This is a local consistency ledger, not cryptographic attestation of the
+    // recorder or protection against an actor able to rewrite all local files.
+    private const val SESSION_RECORD="capture_session_v1.txt"
+    private const val SEALED_MANIFEST="capture_manifest_v1.txt"
+    private fun exists(f:File)=Files.exists(f.toPath(),LinkOption.NOFOLLOW_LINKS)
+    private fun localFile(folder:File,name:String):File {
+        check(folder.isDirectory && folder.absoluteFile==folder.canonicalFile &&
+            idPattern.matches(folder.name)){"LAB_D_LONG_MANIFEST_HOLD"}
+        return File(folder,name)
+    }
+    private fun readLocal(f:File,limit:Long):ByteArray {
+        check(Files.isRegularFile(f.toPath(),LinkOption.NOFOLLOW_LINKS) &&
+            f.absoluteFile==f.canonicalFile && f.length() in 1L..limit){
+            "LAB_D_LONG_MANIFEST_HOLD"
+        }
+        return f.readBytes().also{check(it.size.toLong()==f.length()){
+            "LAB_D_LONG_MANIFEST_HOLD"
+        }}
+    }
+    private fun createLocal(f:File,bytes:ByteArray) {
+        check(!exists(f)){"LAB_D_LONG_MANIFEST_EXISTS_HOLD"}
+        try {
+            FileChannel.open(f.toPath(),StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE).use { ch ->
+                val b=ByteBuffer.wrap(bytes)
+                while(b.hasRemaining())check(ch.write(b)>0){"LAB_D_LONG_MANIFEST_WRITE_HOLD"}
+                ch.force(true)
+            }
+        } catch(e:java.io.IOException) {
+            throw IllegalStateException("LAB_D_LONG_MANIFEST_WRITE_HOLD",e)
+        }
+        check(readLocal(f,16384L).contentEquals(bytes)){"LAB_D_LONG_MANIFEST_HOLD"}
+    }
+    fun beginManifest(folder:File,recorder:String) {
+        check(idPattern.matches(recorder)){"LAB_D_LONG_MANIFEST_HOLD"}
+        val bytes="v1\t${folder.name}\t$recorder\n".toByteArray(Charsets.US_ASCII)
+        createLocal(localFile(folder,SESSION_RECORD),bytes)
+    }
+    /** Canonical records are supplied only by the already verified Part/WAV proof.
+     * Raw PCM is compared byte-for-byte with those WAVs by the caller.
+     * The final ledger binds exact ordered receipt bytes, verified Part descriptors,
+     * session and recorder lifetime. Missing final publication stays NOT_VERIFIED.
+     */
+    fun manifestState(folder:File,items:List<Sample>,partRecords:List<String>,
+        completed:Boolean,seal:Boolean=false):String {
+        inspect(items)
+        val start=localFile(folder,SESSION_RECORD)
+        val target=localFile(folder,SEALED_MANIFEST)
+        if(!exists(start)) {
+            check(!exists(target)&&!seal){"LAB_D_LONG_MANIFEST_HOLD"}
+            return "LOCAL_MANIFEST_ABSENT_NOT_VERIFIED"
+        }
+        val binding=readLocal(start,128L)
+        val text=binding.toString(Charsets.US_ASCII)
+        val fields=text.trimEnd('\n').split('\t')
+        check(fields.size==3 && fields[0]=="v1" && fields[1]==folder.name &&
+            idPattern.matches(fields[2]) &&
+            binding.contentEquals("v1\t${folder.name}\t${fields[2]}\n".toByteArray(Charsets.US_ASCII))){
+            "LAB_D_LONG_MANIFEST_HOLD"
+        }
+        check(items.all{it.observation?.session==folder.name &&
+            it.observation?.recorder==fields[2]}){"LAB_D_LONG_MANIFEST_BINDING_HOLD"}
+        if(!completed) {
+            check(!exists(target)&&!seal){"LAB_D_LONG_MANIFEST_HOLD"}
+            return "LOCAL_MANIFEST_UNSEALED_NOT_VERIFIED"
+        }
+        check(partRecords.size in 1..3 && partRecords.all{
+            it.length<=256 && Regex("^[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9a-f]{64}$").matches(it)
+        }){"LAB_D_LONG_MANIFEST_HOLD"}
+        val md=java.security.MessageDigest.getInstance("SHA-256")
+        md.update(binding)
+        for(record in partRecords)md.update("part\t$record\n".toByteArray(Charsets.US_ASCII))
+        for(sample in items){md.update("pts\t".toByteArray(Charsets.US_ASCII));md.update(encode(sample))}
+        val hash=md.digest().joinToString(""){"%02x".format(it)}
+        val expected="v1\t${folder.name}\t${fields[2]}\t${partRecords.size}\t${items.size}\t$hash\n"
+            .toByteArray(Charsets.US_ASCII)
+        if(seal)createLocal(target,expected)
+        if(!exists(target))return "LOCAL_MANIFEST_MISSING_NOT_VERIFIED"
+        check(readLocal(target,512L).contentEquals(expected)){"LAB_D_LONG_MANIFEST_MISMATCH_HOLD"}
+        return "LOCAL_MANIFEST_MATCH_NOT_ATTESTED"
     }
 
     fun publish(folder:File,index:Int,s:Sample) {

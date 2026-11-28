@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v44.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
 
 import java.io.File
 import java.io.FileOutputStream
@@ -220,6 +220,73 @@ fun main() {
             original.forEach{(name,bytes)->check(File(d,name).readBytes().contentEquals(bytes))}
             check(File(d,"part_000003.commit").exists() && !File(d,"finished_v1.txt").exists())
         }
+        case("local manifest binds real sealed Part bytes and PTS receipts across reopen") { d,id,_ ->
+            val lifetime=UUID.randomUUID().toString()
+            fun sample(frame:Long,recorder:String=lifetime):LabDLongPts.Sample {
+                val ns=100000000000L+frame*62500L
+                return LabDLongPts.Sample(frame,frame,ns-100000L,ns,
+                    LabDLongPts.Observation(id.toString(),recorder,ns,ns+1000L,ns,ns+2000L))
+            }
+            check(LabDLongPts.manifestState(d,emptyList(),emptyList(),false)=="LOCAL_MANIFEST_ABSENT_NOT_VERIFIED")
+            LabDLongPts.beginManifest(d,lifetime)
+            reject{LabDLongPts.beginManifest(d,lifetime)}
+            check(LabDLongPts.manifestState(d,emptyList(),emptyList(),false)=="LOCAL_MANIFEST_UNSEALED_NOT_VERIFIED")
+            LabMultiPartSink(d,id,12,3,{true}).use { sink ->
+                sink.accept(ByteArray(28){(it+1).toByte()});sink.finish(true)
+            }
+            val proof=LabMultiPartProof(d,id)
+            val parts=proof.recoverSnapshot()
+            check(parts.finished&&parts.receipts.size==3)
+            parts.receipts.forEach{proof.verifyRaw(it)}
+            fun records()=LabMultiPartProof(d,id).recoverSnapshot().receipts.map{
+                "${it.index}:${it.start}:${it.end}:${it.bytes}:${it.sha}"
+            }
+            LabDLongPts.publish(d,1,sample(1L))
+            LabDLongPts.publish(d,2,sample(14L))
+            val pts=LabDLongPts.read(d)
+            check(LabDLongPts.manifestState(d,pts,records(),true)=="LOCAL_MANIFEST_MISSING_NOT_VERIFIED")
+            check(LabDLongPts.manifestState(d,pts,records(),true,true)=="LOCAL_MANIFEST_MATCH_NOT_ATTESTED")
+            val files=d.listFiles()!!.associate{it.name to it.readBytes()}
+            check(LabDLongPts.manifestState(d,LabDLongPts.read(d),records(),true)=="LOCAL_MANIFEST_MATCH_NOT_ATTESTED")
+            reject{LabDLongPts.manifestState(d,pts,records(),true,true)}
+            reject{LabDLongPts.manifestState(d,listOf(sample(1L,UUID.randomUUID().toString())),records(),true)}
+            reject{LabDLongPts.manifestState(d,pts.take(1),records(),true)}
+            reject{LabDLongPts.manifestState(d,pts,records().reversed(),true)}
+            reject{LabDLongPts.manifestState(d,pts,records(),false)}
+            files.forEach{(n,b)->check(File(d,n).readBytes().contentEquals(b))}
+            // A syntactically valid changed PTS receipt is caught by the final digest.
+            val receipt=File(d,"longpts_000002.receipt")
+            val original=receipt.readBytes()
+            val changed=receipt.readText().replace("v2\t14\t14\t","v2\t14\t15\t")
+            check(changed!=receipt.readText());receipt.writeText(changed)
+            reject{LabDLongPts.manifestState(d,LabDLongPts.read(d),records(),true)}
+            check(receipt.readText()==changed)
+            receipt.writeBytes(original) // fixture only
+            val start=File(d,"capture_session_v1.txt")
+            check(start.renameTo(File(d,"fixture-start.txt")))
+            reject{LabDLongPts.manifestState(d,pts,records(),true)}
+        }
+        case("interrupted multi-Part prefix retains unsealed manifest state and raw tail") { d,id,_ ->
+            val lifetime=UUID.randomUUID().toString()
+            LabDLongPts.beginManifest(d,lifetime)
+            var space=true
+            LabMultiPartSink(d,id,12,3,{space}).use { sink ->
+                sink.accept(ByteArray(28){it.toByte()})
+                space=false;reject{sink.accept(ByteArray(4){7})}
+            }
+            val proof=LabMultiPartProof(d,id)
+            val prefix=proof.recoverSnapshot()
+            check(!prefix.finished&&prefix.receipts.size==2)
+            prefix.receipts.forEach{proof.verifyRaw(it)}
+            val records=prefix.receipts.map{"${it.index}:${it.start}:${it.end}:${it.bytes}:${it.sha}"}
+            val original=d.listFiles()!!.associate{it.name to it.readBytes()}
+            check(LabDLongPts.manifestState(d,emptyList(),records,false)=="LOCAL_MANIFEST_UNSEALED_NOT_VERIFIED")
+            reject{LabDLongPts.manifestState(d,emptyList(),records,false,true)}
+            check(!File(d,"capture_manifest_v1.txt").exists())
+            check(File(d,"part_000003_inflight.pcm").length()==4L)
+            original.forEach{(n,b)->check(File(d,n).readBytes().contentEquals(b))}
+        }
+        println("LAB_D_LONG_LOCAL_MANIFEST_HOST_PASS")
         println("HOST_REGRESSION=$count/$count PASS")
     } finally { base.deleteRecursively() }
 }
