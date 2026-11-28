@@ -9,16 +9,16 @@ WORKFLOW = (REPO / ".github/workflows/public-groq-lab-v021-debug-apk.yml")
 
 def identity_is_consistent(workflow: str, pubspec: str, debug: str) -> bool:
     return all((
-        'version: 0.4.40+45' in pubspec,
-        "versionName = '0.4.40'" in debug,
-        'versionCode = 45' in debug,
-        'public_lab_v45.groq_stt_lab' in debug,
-        'echo "VERSION=0.4.40+45"' in workflow,
-        '--build-name=0.4.40 --build-number=45' in workflow,
-        "versionName='0.4.40'" in workflow,
-        "versionCode='45'" in workflow,
-        'public_lab_v45.groq_stt_lab' in workflow,
-        'groq-stt-lab-v0.4.40+45-public-debug.apk' in workflow,
+        'version: 0.4.41+46' in pubspec,
+        "versionName = '0.4.41'" in debug,
+        'versionCode = 46' in debug,
+        'public_lab_v46.groq_stt_lab' in debug,
+        'echo "VERSION=0.4.41+46"' in workflow,
+        '--build-name=0.4.41 --build-number=46' in workflow,
+        "versionName='0.4.41'" in workflow,
+        "versionCode='46'" in workflow,
+        'public_lab_v46.groq_stt_lab' in workflow,
+        'groq-stt-lab-v0.4.41+46-public-debug.apk' in workflow,
     ))
 
 class BuildIdentityParityTests(unittest.TestCase):
@@ -36,19 +36,19 @@ class BuildIdentityParityTests(unittest.TestCase):
         self.assertIn('--org=' + organization, bootstrap)
         self.assertIn('android/app/src/main/kotlin/' + package_path, bootstrap)
         self.assertNotIn('public_lab_v25', bootstrap)
-        self.assertIn('v0.4.40+45', bootstrap)
+        self.assertIn('v0.4.41+46', bootstrap)
 
     def test_stale_provenance_fails_closed(self):
         workflow = WORKFLOW.read_text(encoding='utf8')
         pubspec = (LAB / 'pubspec.yaml').read_text(encoding='utf8')
         debug = (LAB / 'lib/lab_debug_log.dart').read_text(encoding='utf8')
         self.assertFalse(identity_is_consistent(
-            workflow.replace('echo "VERSION=0.4.40+45"',
+            workflow.replace('echo "VERSION=0.4.41+46"',
                              'echo "VERSION=0.4.17+22"'),
             pubspec, debug))
         self.assertFalse(identity_is_consistent(
             workflow, pubspec,
-            debug.replace("versionCode = 45", "versionCode = 21")))
+            debug.replace("versionCode = 46", "versionCode = 21")))
 
 if __name__ == '__main__':
     unittest.main()

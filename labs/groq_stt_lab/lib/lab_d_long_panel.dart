@@ -131,6 +131,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
       final coverage=p?['ptsCoverage'];
       final observations=p?['ptsObservations'],provenance=p?['ptsProvenance'];
       final manifest=p?['manifestState'];
+      final prefix=p?['prefixEvidence'];
       if(p?['unaccelerated']!=true||parts is! List||parts.length>3||
          tail is! int||tail<0||tail>115200000||
          status is! String||!{'completed','interrupted','uncommitted'}.contains(status)||
@@ -145,6 +146,14 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
          session is! String||
          !RegExp(r'^[0-9a-f-]{36}$').hasMatch(session)) {
         throw StateError('LAB_D_LONG_READBACK_HOLD');
+      }
+      if(prefix is! Map)throw StateError('LAB_D_LONG_PREFIX_HOLD');
+      final prefixState=prefix['state'],prefixMatched=prefix['matched'],prefixMissing=prefix['missing'];
+      if(prefixMatched is! int||prefixMissing is! int||prefixMatched<0||prefixMissing<0||
+         prefixMatched+prefixMissing!=parts.length||
+         prefixState!=(parts.isEmpty?'LOCAL_PREFIX_EMPTY_NOT_VERIFIED':
+           prefixMissing==0?'LOCAL_PREFIX_MATCH_NOT_ATTESTED':'LOCAL_PREFIX_MISSING_NOT_VERIFIED')){
+        throw StateError('LAB_D_LONG_PREFIX_HOLD');
       }
       var last=0;final lines=<String>[];final hashes=<int,String>{};
       for(final raw in parts){
@@ -285,6 +294,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         'pts_outside_committed_samples':outside,'pts_committed_boundaries':boundaries.length,
         'pts_endpoint_state':endpointState,
         'manifest_state':manifest,
+        'prefix_state':prefixState,'prefix_matched':prefixMatched,'prefix_missing':prefixMissing,
         'pts_continuity':'NOT_VERIFIED'
       });
       if(mounted)setState((){_verifiedSession=session;_verifiedShas.addAll(hashes);_report=
@@ -294,6 +304,7 @@ class _LabDLongPanelState extends State<LabDLongPanel> with WidgetsBindingObserv
         '未提交 $tail B；硬體 PTS $pts；取樣 $count 次；'
         '封存末端 PTS：$endpointState。'
         '本機封存證據清冊：$manifest。非跨程序來源認證。'
+        '已提交 Part 持久化檢查點：$prefixState；符合 $prefixMatched 段；缺少 $prefixMissing 段。'
         '60 分鐘兩側硬體取樣：'+(cross?'已觀察':'未證實')+'。'
         +lines.join('；')
         +'。PTS 同時基取樣證據：'

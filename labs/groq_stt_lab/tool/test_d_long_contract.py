@@ -107,6 +107,17 @@ class DLongContracts(unittest.TestCase):
         self.assertIn("verifyOriginal=true,sealManifest=normal.get()",CAPTURE)
         self.assertIn("本機封存證據清冊",UI)
         self.assertIn("'manifest_state':manifest",UI)
+    def test_committed_prefix_checkpoint_not_rebuilt_on_recovery(self):
+        proof=(LAB/"native/LabMultiPartProof.kt").read_text()
+        for token in ("fun publishPrefix", "fun prefixState", "capture_prefix_",
+                      "LOCAL_PREFIX_MISSING_NOT_VERIFIED", "LAB_D_LONG_PREFIX_ORPHAN_HOLD",
+                      "LAB_D_LONG_PREFIX_MISMATCH_HOLD"):
+            self.assertIn(token,PTS)
+        self.assertIn("onVerifiedPart={r->LabDLongPts.publishPrefix",CAPTURE)
+        self.assertIn("LabDLongPts.prefixState(dir,records)",CAPTURE)
+        self.assertLess(proof.index("proof.verifyRaw(receipt)"),proof.index("callback(receipt)"))
+        self.assertIn("已提交 Part 持久化檢查點",UI)
+        self.assertIn("'prefix_state':prefixState",UI)
     def test_sealed_wav_preview_is_local_and_requires_verified_receipt(self):
         proof=(LAB/"native/LabMultiPartProof.kt").read_text()
         for token in ("fun verifyRaw", "fun verifiedWav", "recoverSnapshot().receipts",

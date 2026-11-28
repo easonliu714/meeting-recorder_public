@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v46.groq_stt_lab
 
 import java.io.File
 import java.io.FileOutputStream
@@ -286,6 +286,61 @@ fun main() {
             check(File(d,"part_000003_inflight.pcm").length()==4L)
             original.forEach{(n,b)->check(File(d,n).readBytes().contentEquals(b))}
         }
+        case("committed prefix checkpoints survive two-Part storage interruption and reopen") { d,id,_ ->
+            LabDLongPts.beginManifest(d,UUID.randomUUID().toString())
+            fun record(r:LabMultiPartProof.Receipt)="${r.index}:${r.start}:${r.end}:${r.bytes}:${r.sha}"
+            var space=true
+            LabMultiPartSink(d,id,12,3,{space},onVerifiedPart={r->
+                LabDLongPts.publishPrefix(d,r.index,record(r))
+            }).use { sink ->
+                sink.accept(ByteArray(28){(it+1).toByte()})
+                space=false;reject{sink.accept(ByteArray(4){7})}
+            }
+            val proof=LabMultiPartProof(d,id)
+            val parts=proof.recoverSnapshot()
+            check(!parts.finished && parts.receipts.size==2)
+            parts.receipts.forEach{proof.verifyRaw(it)}
+            val records=parts.receipts.map(::record)
+            val original=d.listFiles()!!.associate{it.name to it.readBytes()}
+            check(LabDLongPts.prefixState(d,records)==mapOf(
+                "state" to "LOCAL_PREFIX_MATCH_NOT_ATTESTED","matched" to 2,"missing" to 0))
+            check(LabDLongPts.manifestState(d,emptyList(),records,false)=="LOCAL_MANIFEST_UNSEALED_NOT_VERIFIED")
+            reject{LabDLongPts.publishPrefix(d,1,records[0])}
+            check(File(d,"part_000003_inflight.pcm").length()==4L)
+            check(!File(d,"capture_prefix_000003.txt").exists())
+            original.forEach{(n,b)->check(File(d,n).readBytes().contentEquals(b))}
+            val second=File(d,"capture_prefix_000002.txt")
+            val saved=second.readBytes()
+            check(second.renameTo(File(d,"fixture-missing.txt")))
+            check(LabDLongPts.prefixState(d,records)==mapOf(
+                "state" to "LOCAL_PREFIX_MISSING_NOT_VERIFIED","matched" to 1,"missing" to 1))
+            check(!second.exists())
+            second.writeBytes(saved+byteArrayOf(10))
+            reject{LabDLongPts.prefixState(d,records)}
+            check(second.readBytes().contentEquals(saved+byteArrayOf(10)))
+            second.writeBytes(saved)
+            File(d,"capture_prefix_000003.txt").writeBytes(saved)
+            reject{LabDLongPts.prefixState(d,records)}
+        }
+        case("checkpoint write failure after receipt keeps committed prefix and no terminal") { d,id,_ ->
+            LabDLongPts.beginManifest(d,UUID.randomUUID().toString())
+            fun record(r:LabMultiPartProof.Receipt)="${r.index}:${r.start}:${r.end}:${r.bytes}:${r.sha}"
+            val published=mutableListOf<Int>()
+            LabMultiPartSink(d,id,12,3,{true},onCommit={published.add(it)},onVerifiedPart={r->
+                if(r.index==2)throw java.io.IOException("injected checkpoint failure")
+                LabDLongPts.publishPrefix(d,r.index,record(r))
+            }).use { sink -> reject{sink.accept(ByteArray(24){it.toByte()})} }
+            val proof=LabMultiPartProof(d,id)
+            val parts=proof.recoverSnapshot()
+            check(!parts.finished && parts.receipts.size==2 && published==listOf(1))
+            parts.receipts.forEach{proof.verifyRaw(it)}
+            val original=d.listFiles()!!.associate{it.name to it.readBytes()}
+            check(LabDLongPts.prefixState(d,parts.receipts.map(::record))==mapOf(
+                "state" to "LOCAL_PREFIX_MISSING_NOT_VERIFIED","matched" to 1,"missing" to 1))
+            check(!File(d,"capture_prefix_000002.txt").exists()&&!File(d,"finished_v1.txt").exists())
+            original.forEach{(n,b)->check(File(d,n).readBytes().contentEquals(b))}
+        }
+        println("LAB_D_LONG_PREFIX_CHECKPOINT_HOST_PASS")
         println("LAB_D_LONG_LOCAL_MANIFEST_HOST_PASS")
         println("HOST_REGRESSION=$count/$count PASS")
     } finally { base.deleteRecursively() }

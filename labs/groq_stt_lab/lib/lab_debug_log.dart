@@ -8,9 +8,9 @@ import 'package:share_plus/share_plus.dart';
 /// Stable build identity shown to Owner and embedded in every exported log.
 final class LabBuildInfo {
   const LabBuildInfo._();
-  static const versionName = '0.4.40';
-  static const versionCode = 45;
-  static const applicationId = 'com.example.meeting_recorder.public_lab_v45.groq_stt_lab';
+  static const versionName = '0.4.41';
+  static const versionCode = 46;
+  static const applicationId = 'com.example.meeting_recorder.public_lab_v46.groq_stt_lab';
   static const sourceSha = String.fromEnvironment('LAB_BUILD_SHA', defaultValue: 'UNPINNED_LOCAL');
   static String get exportNameStem =>
       'groq_lab_v' + versionName.replaceAll('.', '_') +

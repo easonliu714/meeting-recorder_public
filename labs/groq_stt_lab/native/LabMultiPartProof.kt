@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v46.groq_stt_lab
 
 import java.io.File
 import java.io.FileOutputStream
@@ -196,7 +196,8 @@ internal class LabMultiPartSink(
     private val folder: File, session: UUID,
     private val partBytes: Int, private val partLimit: Int,
     private val spaceOk: () -> Boolean = { folder.usableSpace >= 8L * 1024 * 1024 },
-    private val onCommit: (Int) -> Unit = {}
+    private val onCommit: (Int) -> Unit = {},
+    private val onVerifiedPart: ((LabMultiPartProof.Receipt) -> Unit)? = null
 ) : java.io.Closeable {
     private val proof = LabMultiPartProof(folder, session)
     private var index = 1
@@ -247,6 +248,12 @@ internal class LabMultiPartSink(
         }
         val receipt=atPhase("LAB_MULTI_RECEIPT_COMMIT_HOLD") { proof.commit(index) }
         check(receipt.bytes==written.toLong()+44L)
+        // The optional Gate D checkpoint is a separate durable publication.
+        // If it fails, preserve the committed WAV/receipt; recovery reports missing evidence.
+        onVerifiedPart?.let { callback ->
+            proof.verifyRaw(receipt)
+            callback(receipt)
+        }
         onCommit(index)
         index++;written=0;raw=null
     }

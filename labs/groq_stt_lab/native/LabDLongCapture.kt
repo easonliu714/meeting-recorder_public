@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v46.groq_stt_lab
 
 import android.content.Context
 import android.media.AudioFormat
@@ -64,8 +64,9 @@ internal object LabDLongCapture {
         check(proof?.finished!=true || tail==0L){"LAB_D_LONG_SEAL_HOLD"}
         val pts=LabDLongPts.read(dir)
         val status=LabDLongPts.inspect(pts)
-        val manifest=LabDLongPts.manifestState(dir,pts,
-            parts.map{"${it.index}:${it.start}:${it.end}:${it.bytes}:${it.sha}"},
+        val records=parts.map{"${it.index}:${it.start}:${it.end}:${it.bytes}:${it.sha}"}
+        val prefix=LabDLongPts.prefixState(dir,records)
+        val manifest=LabDLongPts.manifestState(dir,pts,records,
             proof?.finished==true,sealManifest && proof?.finished==true)
         val cross=pts.any{it.capturedFrames<57600000L && it.hardwareFrames!=null} &&
             pts.any{it.capturedFrames>=57600000L && it.hardwareFrames!=null}
@@ -87,6 +88,7 @@ internal object LabDLongCapture {
             "ptsObservations" to LabDLongPts.observations(pts),
             "ptsProvenance" to LabDLongPts.provenance(pts),
             "manifestState" to manifest,
+            "prefixEvidence" to prefix,
             "crossHourHardwareObserved" to cross,
             "hardwareFirst" to (pts.firstOrNull{it.hardwareFrames!=null}?.hardwareFrames?:-1L),
             "hardwareLast" to (pts.lastOrNull{it.hardwareFrames!=null}?.hardwareFrames?:-1L),
@@ -154,7 +156,9 @@ internal object LabDLongCapture {
             try {
                 LabMultiPartSink(dir,id,PART_BYTES,PART_LIMIT,
                     spaceOk={dir.usableSpace>=REMAINING_SAFE},
-                    onCommit={committed.set(it)}).use { sink ->
+                    onCommit={committed.set(it)},
+                    onVerifiedPart={r->LabDLongPts.publishPrefix(dir,r.index,
+                        "${r.index}:${r.start}:${r.end}:${r.bytes}:${r.sha}")}).use { sink ->
                     while(!done.get() || queue.isNotEmpty()) {
                         val bytes=queue.poll(100,TimeUnit.MILLISECONDS)
                         if(bytes!=null)sink.accept(bytes)

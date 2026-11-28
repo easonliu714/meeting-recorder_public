@@ -1,7 +1,7 @@
 name: groq_stt_lab
 description: "Audited public Lab-only Groq STT demonstrator v0.4.15: consented one-shot HTTP and immutable raw receipts."
 publish_to: none
-version: 0.4.40+45
+version: 0.4.41+46
 
 environment:
   sdk: ">=3.5.0 <4.0.0"

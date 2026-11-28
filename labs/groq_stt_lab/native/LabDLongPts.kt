@@ -1,4 +1,4 @@
-package com.example.meeting_recorder.public_lab_v45.groq_stt_lab
+package com.example.meeting_recorder.public_lab_v46.groq_stt_lab
 
 import java.io.File
 import java.nio.ByteBuffer
@@ -296,6 +296,64 @@ internal object LabDLongPts {
         val bytes="v1\t${folder.name}\t$recorder\n".toByteArray(Charsets.US_ASCII)
         createLocal(localFile(folder,SESSION_RECORD),bytes)
     }
+    // A checkpoint is written by the serialized disk worker after a committed
+    // WAV has been compared to its original PCM, not reconstructed on recovery.
+    private val prefixPattern=Regex("^capture_prefix_([0-9]{6})[.]txt$")
+    private fun prefixName(i:Int)="capture_prefix_%06d.txt".format(java.util.Locale.ROOT,i)
+    private fun prefixBinding(folder:File):ByteArray {
+        val bytes=readLocal(localFile(folder,SESSION_RECORD),128L)
+        val fields=bytes.toString(Charsets.US_ASCII).trimEnd('\n').split('\t')
+        check(fields.size==3 && fields[0]=="v1" && fields[1]==folder.name &&
+            idPattern.matches(fields[2]) &&
+            bytes.contentEquals("v1\t${folder.name}\t${fields[2]}\n".toByteArray(Charsets.US_ASCII))){
+            "LAB_D_LONG_PREFIX_BINDING_HOLD"
+        }
+        return bytes
+    }
+    private fun prefixBytes(binding:ByteArray,index:Int,record:String):ByteArray {
+        check(index in 1..3 &&
+            Regex("^${index}:[0-9]+:[0-9]+:[0-9]+:[0-9a-f]{64}$").matches(record)){
+            "LAB_D_LONG_PREFIX_HOLD"
+        }
+        return binding+"part\t$record\n".toByteArray(Charsets.US_ASCII)
+    }
+    fun publishPrefix(folder:File,index:Int,record:String) {
+        val expected=prefixBytes(prefixBinding(folder),index,record)
+        createLocal(localFile(folder,prefixName(index)),expected)
+    }
+    /** Missing checkpoints are possible after a crash between commit and
+     * checkpoint publication. Do not promote, backfill or claim attestation.
+     * Existing malformed, orphan or mismatching evidence fails closed. */
+    fun prefixState(folder:File,records:List<String>):Map<String,Any> {
+        check(records.size<=3){"LAB_D_LONG_PREFIX_HOLD"}
+        val files=(folder.listFiles()?:error("LAB_D_LONG_PREFIX_HOLD"))
+            .filter{it.name.startsWith("capture_prefix_")}
+        val byIndex=files.associate { f ->
+            val match=prefixPattern.matchEntire(f.name)?:error("LAB_D_LONG_PREFIX_HOLD")
+            val i=match.groupValues[1].toInt()
+            check(i in 1..records.size){"LAB_D_LONG_PREFIX_ORPHAN_HOLD"}
+            i to f
+        }
+        val binding=if(files.isEmpty())null else prefixBinding(folder)
+        var matched=0
+        records.forEachIndexed { offset,record ->
+            val i=offset+1
+            val file=byIndex[i]
+            if(file!=null) {
+                check(readLocal(file,512L).contentEquals(prefixBytes(requireNotNull(binding),i,record))){
+                    "LAB_D_LONG_PREFIX_MISMATCH_HOLD"
+                }
+                matched++
+            }
+        }
+        val state=when {
+            records.isEmpty()->"LOCAL_PREFIX_EMPTY_NOT_VERIFIED"
+            matched==records.size->"LOCAL_PREFIX_MATCH_NOT_ATTESTED"
+            else->"LOCAL_PREFIX_MISSING_NOT_VERIFIED"
+        }
+        return mapOf("state" to state,"matched" to matched,"missing" to records.size-matched)
+    }
+
     /** Canonical records are supplied only by the already verified Part/WAV proof.
      * Raw PCM is compared byte-for-byte with those WAVs by the caller.
      * The final ledger binds exact ordered receipt bytes, verified Part descriptors,
